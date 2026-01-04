@@ -241,15 +241,33 @@ async def classification_tools(
                 targets = [img for img in images if img not in analyzed]
             
             if targets:
-                tasks = [analyze_image(img, config) for img in targets]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                
+                # 순차 처리 + Rate Limit 재시도 로직
                 new_vision_results = {}
                 new_analyzed = []
-                for img, result in zip(targets, results):
-                    if not isinstance(result, Exception):
-                        new_vision_results[img] = result.model_dump()
-                        new_analyzed.append(img)
+                
+                for img in targets:
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            result = await analyze_image(img, config)
+                            new_vision_results[img] = result.model_dump()
+                            new_analyzed.append(img)
+                            break  # 성공하면 다음 이미지로
+                        except Exception as e:
+                            error_msg = str(e)
+                            if "429" in error_msg or "rate_limit" in error_msg.lower():
+                                # Rate Limit - 잠시 대기 후 재시도
+                                wait_time = (attempt + 1) * 5  # 5초, 10초, 15초
+                                await asyncio.sleep(wait_time)
+                                if attempt == max_retries - 1:
+                                    # 마지막 시도도 실패하면 건너뛰기
+                                    pass
+                            else:
+                                # 다른 에러는 건너뛰기
+                                break
+                    
+                    # 이미지 간 딜레이 (Rate Limit 방지)
+                    await asyncio.sleep(1)
                 
                 update_payload["vision_results"] = new_vision_results
                 update_payload["analyzed_images"] = state.get("analyzed_images", []) + new_analyzed
