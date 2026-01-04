@@ -4,6 +4,9 @@
 
 LangGraph 기반의 멀티 에이전트 시스템으로, 스크린샷 이미지를 분석하여 카테고리를 자동 분류하고, 웹 검색을 통해 카테고리별 인사이트를 수집한 뒤 종합 보고서를 생성합니다.
 
+
+**🌐 Demo: [https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app](https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app)**
+
 ---
 
 ## 🎯 프로젝트 목표
@@ -188,23 +191,35 @@ class InsightState(MessagesState):
 
 ```
 capture-insight/
+├── app.py                    # Streamlit 웹앱
+├── requirements.txt          # Streamlit Cloud 배포용 의존성
+├── langgraph.json            # LangGraph 설정
+├── pyproject.toml            # 의존성 관리 (uv)
 ├── src/screenshot_analyzer/
-│   ├── analyzer.py       # 메인 그래프 및 서브그래프 정의
-│   ├── state.py          # State 및 도구 스키마 정의
-│   ├── prompts.py        # LLM 프롬프트 템플릿
-│   ├── configuration.py  # 설정 관리
-│   └── utils.py          # Vision API, Tavily 검색 유틸
-├── langgraph.json        # LangGraph 설정
-├── pyproject.toml        # 의존성 관리 (uv)
-└── env.example           # 환경 변수 템플릿
+│   ├── analyzer.py           # 메인 그래프 및 서브그래프 정의
+│   ├── state.py              # State 및 도구 스키마 정의
+│   ├── prompts.py            # LLM 프롬프트 템플릿
+│   ├── configuration.py      # 설정 관리
+│   └── utils.py              # Vision API, Tavily 검색 유틸
+├── examples/
+│   └── screenshots/          # 예제 스크린샷 (80장)
+├── scripts/
+│   └── run_example.py        # CLI 실행 스크립트
+└── .streamlit/
+    └── secrets.toml.example  # Streamlit Cloud 환경 변수 템플릿
 ```
 
 ---
 
-## 🚀 설치 및 실행
+## 🚀 실행 방법
 
-### 1. 의존성 설치
+### 방법 1: 웹앱으로 바로 사용 (추천)
 
+👉 **[https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app](https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app)**
+
+### 방법 2: 로컬에서 실행
+
+#### 1. 의존성 설치
 ```bash
 # uv 설치 (없는 경우)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -213,8 +228,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 ```
 
-### 2. 환경 변수 설정
-
+#### 2. 환경 변수 설정
 ```bash
 cp env.example .env
 ```
@@ -223,11 +237,65 @@ cp env.example .env
 # .env
 OPENAI_API_KEY=sk-your-openai-api-key
 TAVILY_API_KEY=tvly-your-tavily-api-key
+
+# LangSmith (선택)
+LANGSMITH_API_KEY=lsv2_pt_your-langsmith-api-key
+LANGSMITH_PROJECT=capture-insight
+LANGSMITH_TRACING=true
 ```
 
-### 3. 실행
-
+#### 3-A. Streamlit 웹앱 실행
 ```bash
-# LangGraph Studio에서 실행
-uv run langgraph dev
+uv run streamlit run app.py
 ```
+
+#### 3-B. LangGraph Studio 실행
+```bash
+uvx --refresh --from "langgraph-cli[inmem]" --with-editable . --python 3.11 langgraph dev
+```
+
+#### 3-C. CLI 스크립트 실행
+```bash
+# 분석만
+uv run python scripts/run_example.py
+
+# 분석 + 폴더 정리 + 보고서 저장
+uv run python scripts/run_example.py --organize --report
+```
+
+---
+
+## 📊 입출력 예시
+
+### 입력
+- 스크린샷 이미지 파일들 (PNG, JPG 등)
+
+### 출력
+
+#### 1. 분류 결과
+```
+📁 분류된 스크린샷/
+├── 📂 쇼핑/
+│   └── 📂 의류/
+│       └── 🖼️ IMG_001.png
+├── 📂 SNS/
+│   └── 📂 일상/
+│       └── 🖼️ IMG_002.png
+└── 📂 뉴스/
+    └── 🖼️ IMG_003.png
+```
+
+#### 2. 카테고리별 인사이트
+- 트렌드 정보
+- 추천 사항
+- 관련 뉴스
+
+#### 3. 종합 보고서
+- 마크다운 형식의 분석 보고서
+
+---
+
+## 🔗 LangSmith 트레이싱
+
+분석 완료 후 **공개 트레이스 링크**가 자동 생성됩니다.
+- 로그인 없이 누구나 에이전트 실행 과정을 확인할 수 있습니다.
