@@ -34,6 +34,13 @@ if hasattr(st, "secrets"):
 
 from screenshot_analyzer.analyzer import graph
 
+# LangSmith 공개 링크 생성용
+try:
+    from langsmith import Client as LangSmithClient
+    LANGSMITH_AVAILABLE = True
+except ImportError:
+    LANGSMITH_AVAILABLE = False
+
 # ============================================================
 # 페이지 설정
 # ============================================================
@@ -274,6 +281,10 @@ def main():
         st.session_state.trace_id = None
     if "is_analyzing" not in st.session_state:
         st.session_state.is_analyzing = False
+    if "public_trace_url" not in st.session_state:
+        st.session_state.public_trace_url = None
+    if "analysis_started" not in st.session_state:
+        st.session_state.analysis_started = False
     
     # ============================================================
     # 이미지 갤러리
@@ -311,23 +322,6 @@ def main():
     
     st.markdown("---")
     
-    # 분석 중일 때 LangSmith 링크 표시
-    if st.session_state.is_analyzing:
-        langsmith_project = os.environ.get("LANGSMITH_PROJECT", "capture-insight")
-        langsmith_url = f"https://smith.langchain.com/o/default/projects/p/{langsmith_project}"
-        
-        if os.environ.get("LANGSMITH_API_KEY"):
-            st.markdown(f"""
-            <div style="background: #f0f9ff; border-left: 4px solid #3b82f6; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
-                <strong>🔗 실시간 트레이스 확인:</strong> 
-                <a href="{langsmith_url}" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">
-                    LangSmith에서 분석 과정 보기 (새 창)
-                </a>
-                <br>
-                <small style="color: #6b7280;">분석이 진행되는 동안 실시간으로 에이전트 실행 과정을 확인할 수 있습니다</small>
-            </div>
-            """, unsafe_allow_html=True)
-    
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         analyze_button = st.button(
@@ -343,10 +337,7 @@ def main():
     if analyze_button and not st.session_state.is_analyzing:
         st.session_state.is_analyzing = True
         st.session_state.analysis_result = None
-        
-        # LangSmith 프로젝트 링크 (분석 시작 시 즉시 표시)
-        langsmith_project = os.environ.get("LANGSMITH_PROJECT", "capture-insight")
-        langsmith_url = f"https://smith.langchain.com/o/default/projects/p/{langsmith_project}"
+        st.session_state.public_trace_url = None
         
         # 진행 상황 표시
         progress_container = st.container()
@@ -363,25 +354,51 @@ def main():
                 status_text.text(f"🤖 {len(images)}장의 이미지 분석 중... (약 1-2분 소요)")
                 progress_bar.progress(30)
                 
-                # 비동기 실행
+                # 비동기 실행 with run_id 캡처
+                import uuid
+                run_id = str(uuid.uuid4())
+                
                 async def run_graph():
-                    result = await graph.ainvoke({
-                        "images": images,
-                        "existing_categories": None,
-                    })
+                    from langchain_core.runnables import RunnableConfig
+                    config = RunnableConfig(
+                        run_id=run_id,
+                        tags=["streamlit", "capture-insight"],
+                    )
+                    result = await graph.ainvoke(
+                        {
+                            "images": images,
+                            "existing_categories": None,
+                        },
+                        config=config,
+                    )
                     return result
                 
                 result = asyncio.run(run_graph())
                 
-                progress_bar.progress(90)
+                progress_bar.progress(80)
                 status_text.text("📊 결과 정리 중...")
                 
                 # 결과 저장
                 st.session_state.analysis_result = result
+                st.session_state.trace_id = run_id
                 
-                # LangSmith trace ID 추출 (환경변수에서)
-                # 실제로는 callback에서 가져와야 하지만, 여기서는 프로젝트 링크 사용
-                st.session_state.trace_id = os.environ.get("LANGSMITH_PROJECT", "capture-insight")
+                # LangSmith 공개 링크 생성 시도
+                progress_bar.progress(90)
+                status_text.text("🔗 공개 링크 생성 중...")
+                
+                if LANGSMITH_AVAILABLE and os.environ.get("LANGSMITH_API_KEY"):
+                    try:
+                        ls_client = LangSmithClient()
+                        # 잠시 대기 (트레이스 업로드 완료 대기)
+                        import time
+                        time.sleep(2)
+                        
+                        # 공개 링크 생성
+                        public_url = ls_client.share_run(run_id)
+                        st.session_state.public_trace_url = public_url
+                    except Exception as e:
+                        # 공개 링크 생성 실패해도 분석 결과는 표시
+                        st.warning(f"공개 링크 생성 실패: {e}")
                 
                 progress_bar.progress(100)
                 status_text.text("✅ 분석 완료!")
@@ -469,37 +486,34 @@ def main():
                 st.info("보고서가 생성되지 않았습니다.")
         
         # ============================================================
-        # LangSmith 링크
+        # LangSmith 공개 링크 (있을 때만 표시)
         # ============================================================
         
-        st.markdown("---")
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            # LangSmith 프로젝트 페이지 URL
-            langsmith_project = os.environ.get("LANGSMITH_PROJECT", "capture-insight")
-            langsmith_url = f"https://smith.langchain.com/o/default/projects/p/{langsmith_project}"
+        if st.session_state.public_trace_url:
+            st.markdown("---")
             
-            st.markdown(f"""
-            <div style="text-align: center; padding: 1rem;">
-                <a href="{langsmith_url}" target="_blank" style="
-                    display: inline-block;
-                    padding: 0.75rem 2rem;
-                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-                    color: white;
-                    text-decoration: none;
-                    border-radius: 10px;
-                    font-weight: 600;
-                    font-size: 1.1rem;
-                    transition: transform 0.2s;
-                ">
-                    🔗 LangSmith에서 자세히 보기
-                </a>
-                <p style="color: #6b7280; margin-top: 0.5rem; font-size: 0.9rem;">
-                    최신 분석 트레이스 확인 (LangSmith 로그인 필요)
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.markdown(f"""
+                <div style="text-align: center; padding: 1rem;">
+                    <a href="{st.session_state.public_trace_url}" target="_blank" style="
+                        display: inline-block;
+                        padding: 0.75rem 2rem;
+                        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                        color: white;
+                        text-decoration: none;
+                        border-radius: 10px;
+                        font-weight: 600;
+                        font-size: 1.1rem;
+                        transition: transform 0.2s;
+                    ">
+                        🔗 LangSmith 트레이스 보기 (공개 링크)
+                    </a>
+                    <p style="color: #10b981; margin-top: 0.5rem; font-size: 0.9rem; font-weight: 600;">
+                        ✅ 로그인 없이 누구나 볼 수 있습니다!
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
         
         # 다시 분석 버튼
         st.markdown("---")
