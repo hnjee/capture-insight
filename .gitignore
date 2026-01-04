@@ -41,6 +41,7 @@ htmlcov/
 
 # LangGraph / LangChain
 .langgraph/
+.langgraph_api/
 .langchain/
 langsmith.json
 
@@ -52,4 +53,10 @@ logs/
 *.tmp
 *.temp
 .cache/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# 출력 폴더 (분석 결과)
+output/
 

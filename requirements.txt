@@ -1,0 +1,25 @@
+# Capture Insight - Streamlit Cloud 배포용 의존성
+# 
+# 사용법: Streamlit Cloud에서 자동으로 이 파일을 읽어 의존성 설치
+
+# 웹앱 프레임워크
+streamlit>=1.30.0
+
+# LangGraph & LangChain
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+
+# 검색
+tavily-python>=0.5.0
+
+# 데이터 검증
+pydantic>=2.0.0
+
+# 환경 변수
+python-dotenv>=1.0.0
+
+# LangSmith 트레이싱
+langsmith>=0.1.0
+
