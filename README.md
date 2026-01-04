@@ -1,38 +1,285 @@
-# capture-insight
+# 📸 Capture Insight
 
-스크린샷을 자동으로 분류하고 인사이트를 제공하는 AI 에이전트 (LangGraph 기반)
+> 스크린샷을 자동으로 분류하고 인사이트를 제공하는 AI 에이전트
 
-## 개요
+LangGraph 기반의 멀티 에이전트 시스템으로, 스크린샷 이미지를 분석하여 카테고리를 자동 분류하고, 웹 검색을 통해 카테고리별 인사이트를 수집한 뒤 종합 보고서를 생성합니다.
 
-스크린샷 이미지들을 분석하여 자동으로 카테고리를 분류하고, 각 카테고리에 대한 웹 기반 인사이트를 수집하여 종합 보고서를 생성합니다.
+---
 
-## 기술 스택
+## 🎯 프로젝트 목표
 
-- **LangGraph**: 멀티 에이전트 워크플로우 오케스트레이션
-- **OpenAI GPT-4o**: Vision API 기반 이미지 분석 및 OCR
-- **Tavily**: 실시간 웹 검색
+### 해결하고자 하는 문제
+스마트폰에 쌓여있는 수많은 스크린샷들을 자동으로 정리하고, 각 카테고리에 대한 유용한 정보를 제공받고 싶었습니다.
 
-## 그래프 구조
+### 왜 LangGraph인가?
+- **복잡한 워크플로우**: 이미지 분석 → 분류 → 검색 → 보고서 생성의 다단계 파이프라인
+- **Agentic 설계**: LLM이 스스로 판단하여 재분석/재검색 등을 결정하는 자율적 에이전트 구현
+- **상태 관리**: 각 단계의 결과를 체계적으로 관리하고 다음 단계로 전달
+
+---
+
+## 🛠 기술 스택
+
+| 기술 | 용도 |
+|------|------|
+| **LangGraph** | 멀티 에이전트 워크플로우 오케스트레이션 |
+| **OpenAI GPT-4o** | Vision API 기반 이미지 분석 및 OCR |
+| **Tavily** | 실시간 웹 검색 |
+| **Pydantic** | 타입 안전한 State 및 도구 스키마 정의 |
+
+---
+
+## 🏗 아키텍처
+
+### 전체 그래프 구조
 
 ```
-START
-  ↓
-initialize (상태 초기화)
-  ↓
-classification_phase (서브그래프)
-  ├─ classification_supervisor ←─┐
-  └─ classification_tools ────────┘ (agentic loop)
-  ↓
-insight_phase (서브그래프)
-  ├─ insight_supervisor ←─┐
-  └─ insight_tools ────────┘ (agentic loop)
-  ↓
-final_report (보고서 생성)
-  ↓
-END
+┌─────────────────────────────────────────────────────────────────┐
+│                        메인 그래프                               │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│    START                                                        │
+│      │                                                          │
+│      ▼                                                          │
+│  ┌──────────┐                                                   │
+│  │initialize│  상태 초기화                                       │
+│  └────┬─────┘                                                   │
+│       │                                                          │
+│       ▼                                                          │
+│  ┌─────────────────────────────────────────┐                    │
+│  │     Classification Phase (서브그래프)     │                    │
+│  │  ┌─────────────────────────────────────┐│                    │
+│  │  │                                     ││                    │
+│  │  │  classification_supervisor          ││                    │
+│  │  │         │                           ││                    │
+│  │  │         ▼                           ││                    │
+│  │  │  classification_tools ──────────────┘│ (Agentic Loop)     │
+│  │  │                                      │                    │
+│  │  └──────────────────────────────────────┘                    │
+│  └────────────────────┬────────────────────┘                    │
+│                       │                                          │
+│                       ▼                                          │
+│  ┌─────────────────────────────────────────┐                    │
+│  │       Insight Phase (서브그래프)          │                    │
+│  │  ┌─────────────────────────────────────┐│                    │
+│  │  │                                     ││                    │
+│  │  │     insight_supervisor              ││                    │
+│  │  │         │                           ││                    │
+│  │  │         ▼                           ││                    │
+│  │  │     insight_tools ──────────────────┘│ (Agentic Loop)     │
+│  │  │                                      │                    │
+│  │  └──────────────────────────────────────┘                    │
+│  └────────────────────┬────────────────────┘                    │
+│                       │                                          │
+│                       ▼                                          │
+│  ┌────────────┐                                                 │
+│  │final_report│  보고서 생성                                     │
+│  └─────┬──────┘                                                 │
+│        │                                                         │
+│        ▼                                                         │
+│      END                                                         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## 설치
+### Mermaid 다이어그램 (캡처용)
+
+```mermaid
+flowchart TB
+    subgraph Main["메인 그래프"]
+        START((START)) --> init[initialize]
+        init --> phase1
+        
+        subgraph phase1["Classification Phase"]
+            cs[classification_supervisor] --> ct[classification_tools]
+            ct -->|"더 분석 필요"| cs
+            ct -->|"분류 완료"| phase1_end((출력))
+        end
+        
+        phase1 --> phase2
+        
+        subgraph phase2["Insight Phase"]
+            is[insight_supervisor] --> it[insight_tools]
+            it -->|"더 검색 필요"| is
+            it -->|"인사이트 충분"| phase2_end((출력))
+        end
+        
+        phase2 --> report[final_report]
+        report --> END((END))
+    end
+```
+
+---
+
+## 💭 설계 고민 과정
+
+### 1. State 설계: 통합 vs 분리
+
+**초기 접근**: 하나의 통합 State로 모든 데이터 관리
+
+```python
+# ❌ 초기 설계 (통합)
+class ScreenshotAnalyzerState(TypedDict):
+    images: list[str]
+    vision_results: dict
+    classifications: dict
+    category_insights: dict
+    final_report: str
+    # ... 모든 필드가 한 곳에
+```
+
+**문제점**: 
+- Classification과 Insight는 완전히 다른 작업인데 같은 State를 공유
+- 각 Phase의 내부 상태(반복 횟수, 진행 상황)를 관리하기 어려움
+- 서브그래프 간 결합도가 높아짐
+
+**최종 설계**: Phase별 독립 State + 메인 State
+
+```python
+# ✅ 최종 설계 (분리)
+class ScreenshotAnalyzerState(MessagesState):
+    """메인 그래프 상태 - Phase 간 데이터 전달"""
+    images: list[str]
+    classifications: Annotated[dict, override_reducer]
+    category_insights: Annotated[dict, override_reducer]
+    final_report: str
+
+class ClassificationState(MessagesState):
+    """Classification 서브그래프 전용 상태"""
+    images: list[str]
+    analyzed_images: list[str]  # Phase 내부 진행 상황
+    iteration_count: int        # Agentic 루프 카운터
+    vision_results: dict
+    classifications: dict
+
+class InsightState(MessagesState):
+    """Insight 서브그래프 전용 상태"""
+    categories: list[str]
+    searched_categories: list[str]  # Phase 내부 진행 상황
+    iteration_count: int            # Agentic 루프 카운터
+    category_insights: dict
+```
+
+**결정 이유**: 
+- 각 Phase가 독립적인 책임을 가짐
+- Phase 내부의 Agentic 루프를 깔끔하게 관리 가능
+- LangGraph의 서브그래프 패턴과 자연스럽게 연결
+
+---
+
+### 2. 그래프 구조: 복잡한 서브그래프 vs 단순 선형
+
+**고민**: open_deep_research처럼 복잡한 구조를 그대로 따라할 것인가?
+
+| 비교 | open_deep_research | 본 프로젝트 |
+|------|-------------------|-------------|
+| **목적** | 다양한 질문에 동적 대응 | 고정된 워크플로우 (분류 → 인사이트) |
+| **작업 특성** | 매번 다른 리서치 경로 | 동일한 파이프라인 반복 |
+| **복잡도** | 높음 (Human-in-the-loop 등) | 중간 |
+
+**결정**: 
+- 메인 플로우는 **선형** (Classification → Insight → Report)
+- 각 Phase 내부는 **Agentic** (supervisor ↔ tools 루프)
+
+**이유**: 
+- 우리 워크플로우는 "분류 → 인사이트 → 보고서"로 고정됨
+- 하지만 각 Phase 내부에서는 LLM이 자율적으로 판단해야 함
+  - "이 이미지 분류가 애매한데 다시 분석할까?"
+  - "인사이트가 부족한데 다른 키워드로 검색할까?"
+
+---
+
+### 3. Agentic 설계: Supervisor 패턴
+
+각 Phase 내부에서 **Supervisor가 판단하고 Tools가 실행**하는 구조를 채택했습니다.
+
+```
+┌─────────────────────────────────────────────┐
+│           Classification Phase              │
+│                                             │
+│   Supervisor (LLM)                          │
+│   "미분석 이미지가 3장 있네,                   │
+│    Vision 분석을 먼저 하자"                   │
+│         │                                   │
+│         ▼ ConductVisionAnalysis             │
+│   Tools (실행)                               │
+│   - Vision API 호출                          │
+│   - 결과 State에 저장                         │
+│         │                                   │
+│         ▼ (결과 반환)                         │
+│   Supervisor (LLM)                          │
+│   "분석 완료! 이제 분류하자"                   │
+│         │                                   │
+│         ▼ ConductClassification             │
+│   Tools (실행)                               │
+│   - 분류 수행                                │
+│         │                                   │
+│         ▼ (결과 반환)                         │
+│   Supervisor (LLM)                          │
+│   "신뢰도가 높아. 완료!"                      │
+│         │                                   │
+│         ▼ ClassificationComplete            │
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+**Supervisor가 사용하는 도구들**:
+
+| Phase | 도구 | 설명 |
+|-------|------|------|
+| Classification | `ConductVisionAnalysis` | 이미지 Vision 분석 지시 |
+| Classification | `ConductClassification` | 분류 수행 지시 |
+| Classification | `ClassificationComplete` | Phase 완료 선언 |
+| Insight | `ConductSearch` | 웹 검색 지시 |
+| Insight | `InsightComplete` | Phase 완료 선언 |
+
+---
+
+### 4. 기존 카테고리 활용
+
+**고민**: 사진을 처음 분류할 때와 추가로 분류할 때의 동작이 달라야 하지 않을까?
+
+**해결**: `existing_categories` 입력 파라미터
+
+```python
+# 처음 분류할 때
+await graph.ainvoke({
+    "images": ["img1.png", "img2.png"],
+    "existing_categories": None  # 새로 카테고리 생성
+})
+
+# 기존 카테고리에 추가 분류할 때
+await graph.ainvoke({
+    "images": ["new_img.png"],
+    "existing_categories": ["쇼핑", "뉴스", "SNS"]  # 기존 카테고리 우선 활용
+})
+```
+
+Supervisor 프롬프트에서 이를 활용:
+> "기존 카테고리가 있으면 우선적으로 활용하고, 필요시 새 카테고리를 추가하세요."
+
+---
+
+## 📁 프로젝트 구조
+
+```
+capture-insight/
+├── src/screenshot_analyzer/
+│   ├── analyzer.py       # 메인 그래프 및 서브그래프 정의
+│   ├── state.py          # State 및 도구 스키마 정의
+│   ├── prompts.py        # LLM 프롬프트 템플릿
+│   ├── configuration.py  # 설정 관리
+│   └── utils.py          # Vision API, Tavily 검색 유틸
+├── langgraph.json        # LangGraph 설정
+├── pyproject.toml        # 의존성 관리 (uv)
+└── env.example           # 환경 변수 템플릿
+```
+
+---
+
+## 🚀 설치 및 실행
+
+### 1. 의존성 설치
 
 ```bash
 # uv 설치 (없는 경우)
@@ -40,83 +287,70 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 의존성 설치
 uv sync
-
-# 환경 변수 설정
-cp env.example .env
-# .env 파일을 열고 API 키 입력
 ```
 
-## 환경 변수
-
-| 변수명 | 필수 | 설명 |
-|--------|------|------|
-| `OPENAI_API_KEY` | ✅ | OpenAI API 키 (Vision + 분석) |
-| `TAVILY_API_KEY` | ✅ | Tavily 웹 검색 API 키 |
-| `VISION_MODEL` | ❌ | Vision 모델 (기본: gpt-4o) |
-| `ANALYSIS_MODEL` | ❌ | 분석 모델 (기본: gpt-4o) |
-| `MAX_ANALYSIS_ITERATIONS` | ❌ | 최대 반복 횟수 (기본: 10) |
-
-## 사용법
-
-### LangGraph Studio에서 실행
+### 2. 환경 변수 설정
 
 ```bash
-langgraph dev
+cp env.example .env
 ```
 
-### 코드에서 실행
-
-```python
-import asyncio
-from screenshot_analyzer.analyzer import graph
-
-async def main():
-    result = await graph.ainvoke({
-        "images": [
-            "path/to/screenshot1.png",
-            "path/to/screenshot2.jpg",
-        ],
-        "existing_categories": None  # 또는 기존 카테고리 리스트
-    })
-    
-    print(result["final_report"])
-
-asyncio.run(main())
+```env
+# .env
+OPENAI_API_KEY=sk-your-openai-api-key
+TAVILY_API_KEY=tvly-your-tavily-api-key
 ```
 
-## 입력/출력
+### 3. 실행
 
-### 입력 (InputState)
+```bash
+# LangGraph Studio에서 실행
+uv run langgraph dev
+```
+
+---
+
+## 📊 입출력 예시
+
+### 입력
 
 ```python
 {
-    "images": ["이미지 경로 리스트"],
-    "existing_categories": ["기존 카테고리"] | None
+    "images": [
+        "screenshots/shopping_1.png",
+        "screenshots/news_article.png",
+        "screenshots/instagram_feed.png"
+    ],
+    "existing_categories": None
 }
 ```
 
-### 출력 (ScreenshotAnalyzerState)
+### 출력
 
 ```python
 {
     "classifications": {
-        "이미지경로": {
+        "screenshots/shopping_1.png": {
             "category": "쇼핑",
             "sub_category": "의류",
             "confidence": 0.95,
             "reasoning": "상품 이미지와 가격 정보가 표시됨"
-        }
+        },
+        # ...
     },
     "category_insights": {
         "쇼핑": {
-            "trends": ["트렌드1", "트렌드2"],
-            "recommendations": ["추천1", "추천2"]
-        }
+            "trends": ["2024 봄 트렌드", "지속가능 패션"],
+            "recommendations": ["가격 비교 앱 활용", "리뷰 확인"]
+        },
+        # ...
     },
-    "final_report": "마크다운 형식의 종합 보고서"
+    "final_report": "# 스크린샷 분석 보고서\n\n## 요약\n..."
 }
 ```
 
-## 라이선스
+---
+
+## 📝 라이선스
 
 MIT
