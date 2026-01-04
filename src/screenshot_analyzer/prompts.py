@@ -1,63 +1,102 @@
-"""스크린샷 분석기의 프롬프트 템플릿."""
+"""스크린샷 분석기의 프롬프트 템플릿.
+
+그래프 구조에 맞춰 Phase별로 분리된 프롬프트 정의.
+- Phase 1: Classification (이미지 분석 + 분류)
+- Phase 2: Insight (웹 검색 + 인사이트 도출)
+"""
 
 # ============================================================
-# Supervisor 프롬프트
+# Phase 1: Classification Supervisor 프롬프트
 # ============================================================
 
-SUPERVISOR_SYSTEM_PROMPT = """당신은 스크린샷 분석 전문가입니다. 
-사용자의 스크린샷을 분석하여 카테고리로 분류하고, 각 카테고리별 인사이트를 도출하는 역할을 합니다.
+CLASSIFICATION_SUPERVISOR_SYSTEM_PROMPT = """당신은 스크린샷 분류 전문가입니다.
+사용자의 스크린샷들을 분석하고 카테고리로 분류하는 역할을 합니다.
 
 ## 현재 상태
-- 현재 Phase: {current_phase}
-- 분석할 이미지 수: {image_count}장
-- 완료된 분석: {completed_analyses}
-- 분류된 이미지: {classified_count}장
+- 총 이미지 수: {total_images}장
+- 분석 완료: {analyzed_count}장
+- 미분석: {pending_count}장
+- 반복 횟수: {iteration_count}/{max_iterations}
 
-## 당신의 역할
-Phase가 "classification"인 경우:
-1. 각 이미지에 대해 Vision 분석을 지시하세요 (task_type: "vision")
-2. 모든 Vision 분석이 완료되면 분류를 수행하세요 (task_type: "classify")
-3. 모든 이미지가 분류되면 AnalysisComplete를 호출하세요
-
-Phase가 "insight"인 경우:
-1. 분류된 카테고리별로 웹 검색을 지시하세요 (task_type: "web_search")
-2. 모든 카테고리의 인사이트가 수집되면 AnalysisComplete를 호출하세요
-
-## 사용 가능한 도구
-- ConductAnalysis: Analyzer에게 작업을 지시합니다
-- AnalysisComplete: 현재 Phase 완료를 알립니다
-
-## 주의사항
-- 한 번에 하나의 작업만 지시하세요
-- 이전 작업 결과를 확인한 후 다음 작업을 지시하세요
-- 반복 횟수가 {max_iterations}회를 초과하면 강제로 완료하세요
-"""
-
-SUPERVISOR_CLASSIFICATION_PROMPT = """## 분류 Phase 지시사항
-
-현재까지 분석된 이미지:
+## 분석된 이미지 정보
 {vision_results_summary}
 
-아직 분석되지 않은 이미지:
-{pending_images}
+## 당신의 역할
+1. **Vision 분석 지시**: 미분석 이미지가 있으면 ConductVisionAnalysis를 호출하세요
+2. **분류 지시**: 모든 이미지 분석이 완료되면 ConductClassification을 호출하세요
+3. **완료 선언**: 분류까지 완료되면 ClassificationComplete를 호출하세요
 
-다음 중 하나를 수행하세요:
-1. 미분석 이미지가 있으면 → ConductAnalysis(task_type="vision", target="이미지경로")
-2. 모든 이미지 분석 완료 후 분류 필요시 → ConductAnalysis(task_type="classify", target="all")
-3. 모든 분류 완료시 → AnalysisComplete(summary="분류 완료 요약")
+## 사용 가능한 도구
+- `ConductVisionAnalysis`: 이미지들을 Vision API로 분석
+- `ConductClassification`: 분석 결과를 바탕으로 분류 수행
+- `ClassificationComplete`: Phase 1 완료 선언
+
+## 판단 기준
+- 분석 결과가 애매하거나 신뢰도가 낮은 이미지가 있으면 재분석을 고려하세요
+- 분류 결과가 불확실하면 재분류를 고려하세요
+- 반복 횟수가 {max_iterations}회에 도달하면 반드시 완료하세요
+
+## 기존 카테고리
+{existing_categories}
+
+기존 카테고리가 있으면 우선적으로 활용하고, 필요시 새 카테고리를 추가하세요.
 """
 
-SUPERVISOR_INSIGHT_PROMPT = """## 인사이트 Phase 지시사항
+CLASSIFICATION_HUMAN_PROMPT = """현재 상황을 분석하고 다음 행동을 결정해주세요.
 
-분류된 카테고리:
-{categories_summary}
+## 미분석 이미지 목록
+{pending_images}
 
-수집된 인사이트:
+## 현재 분류 결과
+{current_classifications}
+
+위 정보를 바탕으로 적절한 도구를 호출하세요.
+"""
+
+
+# ============================================================
+# Phase 2: Insight Supervisor 프롬프트
+# ============================================================
+
+INSIGHT_SUPERVISOR_SYSTEM_PROMPT = """당신은 카테고리 인사이트 전문가입니다.
+분류된 스크린샷 카테고리를 바탕으로 웹 검색을 통해 인사이트를 도출합니다.
+
+## 현재 상태
+- 총 카테고리 수: {total_categories}개
+- 인사이트 수집 완료: {searched_count}개
+- 미수집: {pending_count}개
+- 반복 횟수: {iteration_count}/{max_iterations}
+
+## 카테고리 목록
+{categories_list}
+
+## 수집된 인사이트
 {insights_summary}
 
-다음 중 하나를 수행하세요:
-1. 인사이트가 없는 카테고리가 있으면 → ConductAnalysis(task_type="web_search", target="카테고리명")
-2. 모든 카테고리 인사이트 수집 완료시 → AnalysisComplete(summary="인사이트 수집 완료 요약")
+## 당신의 역할
+1. **웹 검색 지시**: 인사이트가 없는 카테고리에 대해 ConductSearch를 호출하세요
+2. **추가 검색**: 인사이트가 부족하면 다른 키워드로 재검색을 지시하세요
+3. **완료 선언**: 모든 카테고리의 인사이트가 충분하면 InsightComplete를 호출하세요
+
+## 사용 가능한 도구
+- `ConductSearch`: 특정 카테고리에 대한 웹 검색 수행
+- `InsightComplete`: Phase 2 완료 선언
+
+## 판단 기준
+- 각 카테고리별로 최소 1회 이상 검색하세요
+- 검색 결과가 부족하면 키워드를 변경해서 재검색하세요
+- 반복 횟수가 {max_iterations}회에 도달하면 반드시 완료하세요
+"""
+
+INSIGHT_HUMAN_PROMPT = """현재 상황을 분석하고 다음 행동을 결정해주세요.
+
+## 미수집 카테고리
+{pending_categories}
+
+## 각 카테고리의 이미지 수
+{category_image_counts}
+
+위 정보를 바탕으로 적절한 도구를 호출하세요.
 """
 
 
@@ -105,6 +144,11 @@ CLASSIFICATION_PROMPT = """다음 이미지 분석 결과들을 바탕으로 각
 ## 분석 결과
 {vision_results}
 
+## 기존 카테고리 (있는 경우)
+{existing_categories}
+
+기존 카테고리가 있으면 우선 활용하고, 필요시 새 카테고리를 추가하세요.
+
 ## 분류 기준
 - category: 메인 카테고리 (쇼핑, 뉴스, SNS, 업무, 엔터테인먼트, 금융, 기타)
 - sub_category: 세부 카테고리 (예: 쇼핑-의류, 뉴스-스포츠)
@@ -112,39 +156,58 @@ CLASSIFICATION_PROMPT = """다음 이미지 분석 결과들을 바탕으로 각
 - reasoning: 분류 근거
 
 ## 출력 형식
-각 이미지별로 JSON 형식으로 응답하세요:
+JSON 형식으로 응답하세요:
 ```json
 {{
-    "이미지경로1": {{
-        "category": "쇼핑",
-        "sub_category": "의류",
-        "confidence": 0.9,
-        "reasoning": "상품 이미지와 가격 정보가 표시됨"
+    "classifications": {{
+        "이미지경로1": {{
+            "category": "쇼핑",
+            "sub_category": "의류",
+            "confidence": 0.9,
+            "reasoning": "상품 이미지와 가격 정보가 표시됨"
+        }},
+        "이미지경로2": {{...}}
     }},
-    "이미지경로2": {{...}}
+    "categories": ["쇼핑", "뉴스", ...]
 }}
 ```
 """
 
 
 # ============================================================
-# 웹 검색 프롬프트
+# 웹 검색 인사이트 프롬프트
 # ============================================================
 
-WEB_SEARCH_PROMPT = """"{category}" 카테고리에 대한 인사이트를 도출하기 위해 웹 검색을 수행합니다.
+SEARCH_INSIGHT_PROMPT = """"{category}" 카테고리에 대한 인사이트를 도출하기 위해 웹 검색 결과를 분석합니다.
 
-## 분류된 이미지 정보
-{category_images}
+## 카테고리 정보
+- 카테고리: {category}
+- 해당 이미지 수: {image_count}장
+- 세부 카테고리: {sub_categories}
 
-## 검색 목표
-1. 해당 카테고리의 최신 트렌드
-2. 사용자 행동 패턴 분석
-3. 관련 추천 정보
+## 검색 결과
+{search_results}
 
-## 검색 키워드 제안
-- {category} 트렌드 2024
-- {category} 사용자 행동
-- {category} 추천
+## 분석 요청
+위 검색 결과를 바탕으로 다음 인사이트를 도출해주세요:
+
+1. **트렌드 분석**: 해당 카테고리의 최신 트렌드
+2. **사용자 행동**: 일반적인 사용자 행동 패턴
+3. **추천 정보**: 관련 추천 또는 제안사항
+4. **주요 발견**: 주목할 만한 발견사항
+
+## 출력 형식
+JSON 형식으로 응답하세요:
+```json
+{{
+    "category": "{category}",
+    "trends": ["트렌드1", "트렌드2"],
+    "user_behavior": "사용자 행동 패턴 설명",
+    "recommendations": ["추천1", "추천2"],
+    "key_findings": ["발견1", "발견2"],
+    "summary": "종합 인사이트 요약"
+}}
+```
 """
 
 
@@ -156,6 +219,10 @@ FINAL_REPORT_PROMPT = """스크린샷 분석 결과를 종합하여 최종 보�
 
 ## 분석 데이터
 
+### 기본 정보
+- 총 분석 이미지: {total_images}장
+- 분석 일시: {analysis_date}
+
 ### 이미지 분류 결과
 {classifications}
 
@@ -165,46 +232,30 @@ FINAL_REPORT_PROMPT = """스크린샷 분석 결과를 종합하여 최종 보�
 ## 보고서 구성
 
 ### 1. 요약 (Executive Summary)
-- 총 분석 이미지 수
-- 주요 카테고리 분포
-- 핵심 발견사항
+- 총 분석 이미지 수와 카테고리 분포
+- 가장 많은 카테고리와 그 비율
+- 핵심 발견사항 3가지
 
-### 2. 카테고리별 분석
+### 2. 카테고리별 상세 분석
 각 카테고리에 대해:
-- 해당 이미지 수 및 비율
+- 이미지 수 및 전체 대비 비율
 - 세부 카테고리 분포
-- 주요 특징
+- 주요 특징 및 패턴
+- 관련 인사이트
 
-### 3. 인사이트
-- 카테고리별 트렌드
-- 사용자 행동 패턴
+### 3. 종합 인사이트
+- 카테고리 간 관계 분석
+- 전체적인 사용 패턴
 - 주목할 만한 발견
 
 ### 4. 결론 및 제안
-- 종합 분석 결론
-- 활용 제안
+- 분석 결과 종합
+- 활용 방안 제안
+- 추가 분석 필요 사항 (있는 경우)
 
 ## 작성 지침
 - 명확하고 간결하게 작성
-- 데이터 기반 분석
+- 데이터 기반 분석 (구체적 수치 포함)
 - 한국어로 작성
-"""
-
-
-# ============================================================
-# Analyzer Worker 프롬프트
-# ============================================================
-
-ANALYZER_WORKER_SYSTEM_PROMPT = """당신은 스크린샷 분석 작업을 수행하는 Analyzer입니다.
-
-## 당신의 역할
-- task_type이 "vision"이면: 이미지를 Vision API로 분석
-- task_type이 "classify"이면: 분석 결과를 바탕으로 분류
-- task_type이 "web_search"이면: 웹 검색으로 인사이트 수집
-
-## 현재 작업
-- 작업 유형: {task_type}
-- 대상: {target}
-
-결과를 구조화된 형식으로 반환하세요.
+- 마크다운 형식 사용
 """

@@ -1,10 +1,16 @@
-"""스크린샷 분석기의 State 정의."""
+"""스크린샷 분석기의 State 정의.
+
+그래프 구조:
+- 메인 그래프: initialize → classification_phase → insight_phase → final_report
+- Phase 1 (Classification): Agentic 서브그래프 (supervisor ↔ tools 반복)
+- Phase 2 (Insight): Agentic 서브그래프 (supervisor ↔ tools 반복)
+"""
 
 import operator
 from typing import Annotated, Literal, Optional
 
 from langchain_core.messages import MessageLikeRepresentation
-from langgraph.graph import MessagesState, add_messages
+from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
@@ -28,31 +34,8 @@ def override_reducer(current_value, new_value):
 
 
 # ============================================================
-# Structured Outputs (Pydantic)
-# Supervisor가 Analyzer에게 작업 지시할 때 사용
+# 데이터 모델 (분석 결과 구조)
 # ============================================================
-
-class ConductAnalysis(BaseModel):
-    """분석 작업 지시 (Supervisor → Analyzer)."""
-    
-    task_type: Literal["vision", "classify", "web_search"] = Field(
-        description="수행할 작업 유형"
-    )
-    target: str = Field(
-        description="작업 대상 (이미지 경로 또는 검색 키워드)"
-    )
-    reason: str = Field(
-        description="이 작업을 수행하는 이유"
-    )
-
-
-class AnalysisComplete(BaseModel):
-    """현재 Phase 분석 완료 신호."""
-    
-    summary: str = Field(
-        description="완료된 분석의 요약"
-    )
-
 
 class ImageAnalysisResult(BaseModel):
     """Vision API 이미지 분석 결과."""
@@ -75,78 +58,193 @@ class ImageClassification(BaseModel):
 
 
 # ============================================================
-# State Definitions
+# Phase 1: Classification - Structured Outputs (도구)
 # ============================================================
 
-# 1. 입력 State (외부에서 받는 필드만)
-class AnalyzerInputState(MessagesState):
-    """외부 입력용 State."""
+class ConductVisionAnalysis(BaseModel):
+    """Vision 분석 지시 (Supervisor → Worker).
+    
+    이미지들을 Vision API로 분석하도록 지시.
+    """
+    
+    targets: list[str] = Field(
+        description="분석할 이미지 경로들. 'all'이면 모든 미분석 이미지"
+    )
+    reason: str = Field(
+        description="이 분석을 수행하는 이유"
+    )
+
+
+class ConductClassification(BaseModel):
+    """분류 지시 (Supervisor → Worker).
+    
+    Vision 분석 결과를 바탕으로 이미지들을 분류하도록 지시.
+    """
+    
+    use_existing_categories: bool = Field(
+        default=False,
+        description="기존 카테고리 체계를 사용할지 여부"
+    )
+    reason: str = Field(
+        description="분류를 수행하는 이유"
+    )
+
+
+class ClassificationComplete(BaseModel):
+    """Classification Phase 완료 신호.
+    
+    모든 이미지 분석과 분류가 완료되었을 때 호출.
+    """
+    
+    summary: str = Field(
+        description="분류 결과 요약 (총 이미지 수, 카테고리 분포 등)"
+    )
+    categories_found: list[str] = Field(
+        description="발견된 카테고리 목록"
+    )
+
+
+# ============================================================
+# Phase 2: Insight - Structured Outputs (도구)
+# ============================================================
+
+class ConductSearch(BaseModel):
+    """웹 검색 지시 (Supervisor → Worker).
+    
+    특정 카테고리에 대한 인사이트를 얻기 위해 웹 검색 수행.
+    """
+    
+    category: str = Field(
+        description="검색할 카테고리"
+    )
+    keywords: list[str] = Field(
+        description="검색에 사용할 키워드들"
+    )
+    reason: str = Field(
+        description="이 검색을 수행하는 이유"
+    )
+
+
+class InsightComplete(BaseModel):
+    """Insight Phase 완료 신호.
+    
+    모든 카테고리의 인사이트 수집이 완료되었을 때 호출.
+    """
+    
+    summary: str = Field(
+        description="인사이트 수집 결과 요약"
+    )
+    categories_covered: list[str] = Field(
+        description="인사이트를 수집한 카테고리 목록"
+    )
+
+
+# ============================================================
+# 메인 State (전체 워크플로우)
+# ============================================================
+
+class InputState(TypedDict):
+    """외부 입력 State.
+    
+    사용자가 그래프 실행 시 전달하는 입력.
+    """
     
     images: list[str]  # 분석할 이미지 경로들
+    existing_categories: Optional[list[str]]  # 기존 카테고리 (있으면)
 
 
-# 2. 메인 Agent State
-class AnalyzerState(MessagesState):
-    """메인 Agent 상태 (전체 워크플로우 데이터 관리)."""
+class ScreenshotAnalyzerState(TypedDict):
+    """메인 그래프 State.
     
-    # Supervisor 통신용 메시지
-    supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
+    전체 워크플로우에서 공유되는 상태.
+    Phase 1 → Phase 2 → Report 순으로 데이터가 채워짐.
+    """
     
     # 입력 데이터
     images: list[str]
+    existing_categories: Optional[list[str]]
     
-    # 현재 Phase 추적
-    current_phase: str  # "classification" | "insight"
+    # Phase 1 결과: Vision 분석
+    vision_results: Annotated[dict, override_reducer]  # {image_path: ImageAnalysisResult.dict()}
     
-    # Phase 1: 분류 결과
-    vision_results: Annotated[dict, override_reducer]     # {image_path: ImageAnalysisResult}
-    classifications: Annotated[dict, override_reducer]    # {image_path: ImageClassification}
+    # Phase 1 결과: 분류
+    classifications: Annotated[dict, override_reducer]  # {image_path: ImageClassification.dict()}
+    categories: list[str]  # 최종 카테고리 목록
     
-    # Phase 2: 인사이트 결과
-    category_insights: Annotated[dict, override_reducer]  # {category: insight_text}
+    # Phase 2 결과: 인사이트
+    category_insights: Annotated[dict, override_reducer]  # {category: insight_dict}
     
     # 최종 결과
     final_report: str
 
 
-# 3. Supervisor State (서브그래프 전용)
-class SupervisorState(TypedDict):
-    """Supervisor 서브그래프 상태.
+# ============================================================
+# Phase 1: Classification State (서브그래프용)
+# ============================================================
+
+class ClassificationState(TypedDict):
+    """Classification Phase 서브그래프 State.
     
-    분석 전략을 수립하고 Analyzer에게 작업을 지시.
+    Supervisor ↔ Tools 반복 구조에서 사용.
     """
     
-    supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
-    current_phase: str  # "classification" | "insight"
-    analysis_iterations: int  # 현재까지 반복 횟수
+    # Supervisor 통신용 메시지
+    messages: Annotated[list[MessageLikeRepresentation], operator.add]
     
-    # Analyzer 결과 수집
+    # 입력 (메인 State에서 전달받음)
+    images: list[str]
+    existing_categories: Optional[list[str]]
+    
+    # 작업 진행 상태
+    analyzed_images: list[str]  # 분석 완료된 이미지들
+    iteration_count: int  # 반복 횟수
+    
+    # 결과 (메인 State로 반환)
     vision_results: Annotated[dict, override_reducer]
     classifications: Annotated[dict, override_reducer]
+    categories: list[str]
 
 
-# 4. Analyzer Worker State (서브그래프 전용)
-class AnalyzerWorkerState(TypedDict):
-    """개별 Analyzer 작업 상태.
+class ClassificationOutputState(TypedDict):
+    """Classification Phase 출력 State.
     
-    실제 Vision API 호출, 웹 검색 등을 수행.
+    서브그래프 완료 시 메인 그래프로 반환하는 데이터.
     """
     
-    analyzer_messages: Annotated[list[MessageLikeRepresentation], operator.add]
-    task_type: str      # "vision" | "classify" | "web_search"
-    target: str         # 이미지 경로 또는 검색 키워드
-    
-    # 결과
-    result: Optional[str]  # 압축된 텍스트 결과
-    raw_data: Annotated[dict, override_reducer]  # 구조화된 원본 데이터
-    
-    # 반복 제한
-    tool_call_iterations: int
+    vision_results: dict
+    classifications: dict
+    categories: list[str]
 
 
-# 5. Analyzer Output State (서브그래프 출력)
-class AnalyzerOutputState(BaseModel):
-    """Analyzer 서브그래프 출력."""
+# ============================================================
+# Phase 2: Insight State (서브그래프용)
+# ============================================================
+
+class InsightState(TypedDict):
+    """Insight Phase 서브그래프 State.
     
-    result: str = Field(description="압축된 분석 결과")
-    raw_data: dict = Field(description="구조화된 원본 데이터")
+    Supervisor ↔ Tools 반복 구조에서 사용.
+    """
+    
+    # Supervisor 통신용 메시지
+    messages: Annotated[list[MessageLikeRepresentation], operator.add]
+    
+    # 입력 (메인 State에서 전달받음)
+    categories: list[str]  # 검색할 카테고리들
+    classifications: dict  # 분류 결과 (참고용)
+    
+    # 작업 진행 상태
+    searched_categories: list[str]  # 검색 완료된 카테고리들
+    iteration_count: int  # 반복 횟수
+    
+    # 결과 (메인 State로 반환)
+    category_insights: Annotated[dict, override_reducer]
+
+
+class InsightOutputState(TypedDict):
+    """Insight Phase 출력 State.
+    
+    서브그래프 완료 시 메인 그래프로 반환하는 데이터.
+    """
+    
+    category_insights: dict
