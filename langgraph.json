@@ -1,0 +1,10 @@
+{
+  "$schema": "https://langchain-ai.github.io/langgraph/schemas/langgraph.schema.json",
+  "dependencies": ["."],
+  "graphs": {
+    "screenshot_analyzer": "./src/screenshot_analyzer/analyzer.py:graph"
+  },
+  "env": ".env"
+}
+
+

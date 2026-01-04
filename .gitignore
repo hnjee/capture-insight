@@ -1,0 +1,62 @@
+# 환경 변수
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 가상환경
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+
+# 패키지 빌드
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 테스트 및 캐시
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# LangGraph / LangChain
+.langgraph/
+.langgraph_api/
+.langchain/
+langsmith.json
+
+# 로그
+*.log
+logs/
+
+# 임시 파일
+*.tmp
+*.temp
+.cache/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# 출력 폴더 (분석 결과)
+output/
+
