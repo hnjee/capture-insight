@@ -18,6 +18,7 @@ from langgraph.types import Command
 
 from screenshot_analyzer.configuration import Configuration
 from screenshot_analyzer.prompts import (
+    CATEGORY_MERGE_PROMPT,
     CLASSIFICATION_HUMAN_PROMPT,
     CLASSIFICATION_PROMPT,
     CLASSIFICATION_SUPERVISOR_SYSTEM_PROMPT,
@@ -30,6 +31,7 @@ from screenshot_analyzer.state import (
     ClassificationComplete,
     ClassificationOutputState,
     ClassificationState,
+    ConductCategoryMerge,
     ConductClassification,
     ConductSearch,
     ConductVisionAnalysis,
@@ -170,7 +172,7 @@ async def classification_supervisor(
     }
     
     # 도구 바인딩
-    tools = [ConductVisionAnalysis, ConductClassification, ClassificationComplete]
+    tools = [ConductVisionAnalysis, ConductClassification, ConductCategoryMerge, ClassificationComplete]
     model_with_tools = configurable_model.bind_tools(tools).with_config(model_config)
     
     # 메시지 구성
@@ -320,6 +322,49 @@ async def classification_tools(
             else:
                 tool_messages.append(ToolMessage(
                     content="분류할 Vision 분석 결과가 없습니다.",
+                    name=tool_name,
+                    tool_call_id=tool_call["id"],
+                ))
+        
+        elif tool_name == "ConductCategoryMerge":
+            # 카테고리 통합/정제 수행
+            current_classifications = {**state.get("classifications", {}), **update_payload.get("classifications", {})}
+            current_categories = update_payload.get("categories", state.get("categories", []))
+            
+            if current_classifications:
+                merge_prompt = CATEGORY_MERGE_PROMPT.format(
+                    current_classifications=json.dumps(current_classifications, ensure_ascii=False, indent=2),
+                    current_categories=", ".join(current_categories) if current_categories else "없음",
+                )
+                
+                model_config = {
+                    "model": configuration.analysis_model,
+                    "max_tokens": configuration.max_tokens,
+                    "api_key": get_api_key_for_model(configuration.analysis_model, config),
+                }
+                merge_model = configurable_model.with_config(model_config)
+                
+                response = await merge_model.ainvoke([
+                    HumanMessage(content=merge_prompt)
+                ])
+                
+                result_dict = parse_json_response(response.content)
+                merged_classifications = result_dict.get("merged_classifications", current_classifications)
+                final_categories = result_dict.get("final_categories", current_categories)
+                merge_summary = result_dict.get("merge_summary", {})
+                
+                # 병합된 결과로 업데이트 (완전 교체)
+                update_payload["classifications"] = {"type": "override", "value": merged_classifications}
+                update_payload["categories"] = final_categories
+                
+                tool_messages.append(ToolMessage(
+                    content=f"카테고리 통합 완료\n병합 요약: {json.dumps(merge_summary, ensure_ascii=False, indent=2)}\n최종 카테고리: {final_categories}",
+                    name=tool_name,
+                    tool_call_id=tool_call["id"],
+                ))
+            else:
+                tool_messages.append(ToolMessage(
+                    content="통합할 분류 결과가 없습니다. 먼저 ConductClassification을 실행하세요.",
                     name=tool_name,
                     tool_call_id=tool_call["id"],
                 ))

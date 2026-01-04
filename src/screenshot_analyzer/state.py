@@ -90,6 +90,18 @@ class ConductClassification(BaseModel):
     )
 
 
+class ConductCategoryMerge(BaseModel):
+    """카테고리 통합/정제 지시 (Supervisor → Worker).
+    
+    초벌 분류 후 유사한 카테고리들을 통합하고 정제하도록 지시.
+    예: "패션 스타일링", "의류", "패션 광고" → "패션"으로 통합
+    """
+    
+    reason: str = Field(
+        description="카테고리 통합을 수행하는 이유"
+    )
+
+
 class ClassificationComplete(BaseModel):
     """Classification Phase 완료 신호.
     
