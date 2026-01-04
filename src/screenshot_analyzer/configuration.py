@@ -1,2 +1,147 @@
-"""Configuration schema for Screenshot Analyzer."""
+"""스크린샷 분석기 시스템의 설정 관리 모듈."""
 
+import os
+from enum import Enum
+from typing import Any, Optional
+
+from langchain_core.runnables import RunnableConfig
+from pydantic import BaseModel, Field
+
+
+class SearchAPI(Enum):
+    """사용 가능한 검색 API 목록."""
+    
+    TAVILY = "tavily"
+    NONE = "none"
+
+
+class Configuration(BaseModel):
+    """스크린샷 분석 Agent의 메인 설정 클래스."""
+    
+    # 모델 설정
+    vision_model: str = Field(
+        default="gpt-4o",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "gpt-4o",
+                "description": "Vision API 호출용 모델 (이미지 분석 + OCR)"
+            }
+        }
+    )
+    analysis_model: str = Field(
+        default="gpt-4o",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "gpt-4o",
+                "description": "분석 및 추론용 모델"
+            }
+        }
+    )
+    report_model: str = Field(
+        default="gpt-4o",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "gpt-4o",
+                "description": "최종 보고서 생성용 모델"
+            }
+        }
+    )
+    max_tokens: int = Field(
+        default=8192,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "number",
+                "default": 8192,
+                "min": 1000,
+                "max": 32000,
+                "description": "일반 응답의 최대 출력 토큰 수"
+            }
+        }
+    )
+    report_max_tokens: int = Field(
+        default=10000,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "number",
+                "default": 10000,
+                "min": 1000,
+                "max": 50000,
+                "description": "보고서 생성의 최대 출력 토큰 수"
+            }
+        }
+    )
+    # 검색 설정
+    search_api: SearchAPI = Field(
+        default=SearchAPI.TAVILY,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "select",
+                "default": "tavily",
+                "description": "웹 검색에 사용할 API",
+                "options": [
+                    {"label": "Tavily", "value": SearchAPI.TAVILY.value},
+                    {"label": "None", "value": SearchAPI.NONE.value}
+                ]
+            }
+        }
+    )
+    max_search_results: int = Field(
+        default=5,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "slider",
+                "default": 5,
+                "min": 1,
+                "max": 20,
+                "step": 1,
+                "description": "가져올 검색 결과의 최대 개수"
+            }
+        }
+    )
+    # Agent 설정
+    max_analysis_iterations: int = Field(
+        default=10,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "slider",
+                "default": 10,
+                "min": 1,
+                "max": 20,
+                "step": 1,
+                "description": "supervisor의 최대 분석 반복 횟수"
+            }
+        }
+    )
+
+    @classmethod
+    def from_runnable_config(
+        cls, config: Optional[RunnableConfig] = None
+    ) -> "Configuration":
+        """RunnableConfig에서 Configuration 인스턴스를 생성한다."""
+        configurable = config.get("configurable", {}) if config else {}
+        field_names = list(cls.model_fields.keys())
+        
+        values: dict[str, Any] = {}
+        for field_name in field_names:
+            # configurable 먼저 확인, 그 다음 환경변수 확인
+            if field_name in configurable and configurable[field_name] is not None:
+                values[field_name] = configurable[field_name]
+            elif os.environ.get(field_name.upper()):
+                env_value = os.environ.get(field_name.upper())
+                if field_name == "search_api" and env_value:
+                    values[field_name] = SearchAPI(env_value)
+                elif field_name in ["max_tokens", "report_max_tokens", 
+                                   "max_search_results", "max_analysis_iterations"]:
+                    values[field_name] = int(env_value)  # type: ignore
+                else:
+                    values[field_name] = env_value
+        
+        return cls(**values)
+
+    class Config:
+        """Pydantic 설정."""
+        
+        arbitrary_types_allowed = True
