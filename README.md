@@ -184,31 +184,6 @@ class InsightState(MessagesState):
 
 ---
 
-### 4. 기존 카테고리 활용
-
-**고민**: 사진을 처음 분류할 때와 추가로 분류할 때의 동작이 달라야 하지 않을까?
-
-**해결**: `existing_categories` 입력 파라미터
-
-```python
-# 처음 분류할 때
-await graph.ainvoke({
-    "images": ["img1.png", "img2.png"],
-    "existing_categories": None  # 새로 카테고리 생성
-})
-
-# 기존 카테고리에 추가 분류할 때
-await graph.ainvoke({
-    "images": ["new_img.png"],
-    "existing_categories": ["쇼핑", "뉴스", "SNS"]  # 기존 카테고리 우선 활용
-})
-```
-
-Supervisor 프롬프트에서 이를 활용:
-> "기존 카테고리가 있으면 우선적으로 활용하고, 필요시 새 카테고리를 추가하세요."
-
----
-
 ## 📁 프로젝트 구조
 
 ```
@@ -255,45 +230,4 @@ TAVILY_API_KEY=tvly-your-tavily-api-key
 ```bash
 # LangGraph Studio에서 실행
 uv run langgraph dev
-```
-
----
-
-## 📊 입출력 예시
-
-### 입력
-
-```python
-{
-    "images": [
-        "screenshots/shopping_1.png",
-        "screenshots/news_article.png",
-        "screenshots/instagram_feed.png"
-    ],
-    "existing_categories": None
-}
-```
-
-### 출력
-
-```python
-{
-    "classifications": {
-        "screenshots/shopping_1.png": {
-            "category": "쇼핑",
-            "sub_category": "의류",
-            "confidence": 0.95,
-            "reasoning": "상품 이미지와 가격 정보가 표시됨"
-        },
-        # ...
-    },
-    "category_insights": {
-        "쇼핑": {
-            "trends": ["2024 봄 트렌드", "지속가능 패션"],
-            "recommendations": ["가격 비교 앱 활용", "리뷰 확인"]
-        },
-        # ...
-    },
-    "final_report": "# 스크린샷 분석 보고서\n\n## 요약\n..."
-}
 ```
