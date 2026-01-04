@@ -21,6 +21,7 @@ from screenshot_analyzer.prompts import (
     CLASSIFICATION_HUMAN_PROMPT,
     CLASSIFICATION_PROMPT,
     CLASSIFICATION_SUPERVISOR_SYSTEM_PROMPT,
+    FINAL_REPORT_PROMPT,
     INSIGHT_HUMAN_PROMPT,
     INSIGHT_SUPERVISOR_SYSTEM_PROMPT,
     SEARCH_INSIGHT_PROMPT,
@@ -77,10 +78,48 @@ async def initialize(state: InputState, config: RunnableConfig) -> dict:
 async def generate_final_report(state: ScreenshotAnalyzerState, config: RunnableConfig) -> dict:
     """최종 보고서 생성 노드.
     
-    TODO: Step 5-4에서 구현 예정
+    분류 결과와 인사이트를 종합하여 마크다운 형식의 보고서를 생성합니다.
     """
+    configuration = Configuration.from_runnable_config(config)
+    
+    # 상태에서 데이터 추출
+    images = state.get("images", [])
+    classifications = state.get("classifications", {})
+    category_insights = state.get("category_insights", {})
+    
+    # 분석 일시
+    from datetime import datetime
+    analysis_date = datetime.now().strftime("%Y년 %m월 %d일 %H:%M")
+    
+    # 분류 결과 정리
+    classifications_str = json.dumps(classifications, ensure_ascii=False, indent=2)
+    
+    # 인사이트 정리
+    insights_str = json.dumps(category_insights, ensure_ascii=False, indent=2)
+    
+    # 프롬프트 구성
+    report_prompt = FINAL_REPORT_PROMPT.format(
+        total_images=len(images),
+        analysis_date=analysis_date,
+        classifications=classifications_str,
+        category_insights=insights_str,
+    )
+    
+    # 모델 설정
+    model_config = {
+        "model": configuration.report_model,
+        "max_tokens": configuration.report_max_tokens,
+        "api_key": get_api_key_for_model(configuration.report_model, config),
+    }
+    report_model = configurable_model.with_config(model_config)
+    
+    # LLM 호출
+    response = await report_model.ainvoke([
+        HumanMessage(content=report_prompt)
+    ])
+    
     return {
-        "final_report": "보고서 생성 예정..."
+        "final_report": response.content
     }
 
 
