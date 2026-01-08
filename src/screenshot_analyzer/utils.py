@@ -19,6 +19,14 @@ from screenshot_analyzer.state import IngestionMetadata, RefinementResult
 # 로깅 설정
 logger = logging.getLogger(__name__)
 
+# ============================================================
+# 전역 모델 인스턴스 (재사용)
+# ============================================================
+
+configurable_model = init_chat_model(
+    configurable_fields=("model", "max_tokens", "api_key"),
+)
+
 
 # ============================================================
 # Phase 0: Ingestion 함수 (경량 VLM)
@@ -57,17 +65,18 @@ async def ingest_image(
             ingestion_error=str(e)
         )
     
-    # 경량 Vision 모델 초기화
+    # 경량 Vision 모델 설정 (전역 인스턴스 재사용)
     api_key = get_api_key_for_model(configuration.ingestion_model, config)
-    model = init_chat_model(
-        model=configuration.ingestion_model,
-        max_tokens=1024,  # 메타데이터 추출이므로 작은 토큰으로 충분
-        api_key=api_key,
-    )
+    model_config = {
+        "model": configuration.ingestion_model,
+        "max_tokens": 1024,  # 메타데이터 추출이므로 작은 토큰으로 충분
+        "api_key": api_key,
+    }
+    model = configurable_model.with_config(model_config)
     
     # 프롬프트 구성 (refinement_threshold 주입)
     prompt = INGESTION_PROMPT.format(
-        refinement_threshold=analyze_image.refinement_threshold
+        refinement_threshold=configuration.refinement_threshold
     )
     
     # Vision API 호출
@@ -238,13 +247,14 @@ async def analyze_image(
     image_base64 = load_image_as_base64(image_path)
     media_type = get_image_media_type(image_path)
     
-    # Vision 모델 초기화
+    # Vision 모델 설정 (전역 인스턴스 재사용)
     api_key = get_api_key_for_model(configuration.vision_model, config)
-    model = init_chat_model(
-        model=configuration.vision_model,
-        max_tokens=configuration.max_tokens,
-        api_key=api_key,
-    )
+    model_config = {
+        "model": configuration.vision_model,
+        "max_tokens": configuration.max_tokens,
+        "api_key": api_key,
+    }
+    model = configurable_model.with_config(model_config)
     
     # Vision API 호출
     message = HumanMessage(
@@ -347,5 +357,3 @@ def get_api_key_for_model(model_name: str, config: Optional[RunnableConfig] = No
         return os.getenv("GOOGLE_API_KEY")
     
     return None
-
-
