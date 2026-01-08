@@ -18,14 +18,52 @@ class SearchAPI(Enum):
 class Configuration(BaseModel):
     """스크린샷 분석 Agent의 메인 설정 클래스."""
     
-    # 모델 설정
+    # ========== Ingestion 설정 (Phase 0) ==========
+    ingestion_model: str = Field(
+        default="gpt-4o-mini",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "gpt-4o-mini",
+                "description": "Ingestion용 경량 Vision 모델 (비용 절감)"
+            }
+        }
+    )
+    refinement_threshold: float = Field(
+        default=0.6,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "slider",
+                "default": 0.6,
+                "min": 0.3,
+                "max": 0.9,
+                "step": 0.1,
+                "description": "이 신뢰도 미만이면 VLM 정밀분석 필요"
+            }
+        }
+    )
+    ingestion_concurrency: int = Field(
+        default=5,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "slider",
+                "default": 5,
+                "min": 1,
+                "max": 10,
+                "step": 1,
+                "description": "Ingestion 동시 처리 수 (Rate Limit 고려)"
+            }
+        }
+    )
+    
+    # ========== 모델 설정 (기존) ==========
     vision_model: str = Field(
         default="gpt-4o",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
                 "default": "gpt-4o",
-                "description": "Vision API 호출용 모델 (이미지 분석 + OCR)"
+                "description": "Vision Refiner용 고성능 모델 (정밀 분석)"
             }
         }
     )

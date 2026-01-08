@@ -15,11 +15,161 @@ from langchain_core.runnables import RunnableConfig
 from tavily import AsyncTavilyClient
 
 from screenshot_analyzer.configuration import Configuration, SearchAPI
-from screenshot_analyzer.prompts import VISION_ANALYSIS_PROMPT
-from screenshot_analyzer.state import ImageAnalysisResult
+from screenshot_analyzer.prompts import INGESTION_PROMPT, VISION_ANALYSIS_PROMPT
+from screenshot_analyzer.state import ImageAnalysisResult, ImageMetadata
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# Phase 0: Ingestion 함수 (경량 VLM)
+# ============================================================
+
+async def ingest_image(
+    image_path: str,
+    config: Optional[RunnableConfig] = None
+) -> ImageMetadata:
+    """경량 VLM으로 단일 이미지의 메타데이터 추출.
+    
+    비용 효율적인 경량 모델(gpt-4o-mini 등)을 사용하여
+    이미지를 텍스트 메타데이터로 변환합니다.
+    
+    Args:
+        image_path: 분석할 이미지 경로
+        config: LangGraph 런타임 설정
+        
+    Returns:
+        ImageMetadata 객체
+    """
+    configuration = Configuration.from_runnable_config(config)
+    
+    # 이미지를 base64로 인코딩
+    try:
+        image_base64 = load_image_as_base64(image_path)
+        media_type = get_image_media_type(image_path)
+    except FileNotFoundError as e:
+        return ImageMetadata(
+            image_path=image_path,
+            description="파일을 찾을 수 없음",
+            ocr_text="",
+            confidence_score=0.0,
+            needs_visual_refinement=True,
+            suggested_categories=[],
+            ingestion_error=str(e)
+        )
+    
+    # 경량 Vision 모델 초기화
+    api_key = get_api_key_for_model(configuration.ingestion_model, config)
+    model = init_chat_model(
+        model=configuration.ingestion_model,
+        max_tokens=1024,  # 메타데이터 추출이므로 작은 토큰으로 충분
+        api_key=api_key,
+    )
+    
+    # 프롬프트 구성 (refinement_threshold 주입)
+    prompt = INGESTION_PROMPT.format(
+        refinement_threshold=configuration.refinement_threshold
+    )
+    
+    # Vision API 호출
+    message = HumanMessage(
+        content=[
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{media_type};base64,{image_base64}"
+                }
+            }
+        ]
+    )
+    
+    try:
+        response = await model.ainvoke([message])
+        
+        # JSON 응답 파싱
+        result_dict = parse_json_response(response.content)
+        
+        confidence = result_dict.get("confidence_score", 0.5)
+        
+        return ImageMetadata(
+            image_path=image_path,
+            description=result_dict.get("description", ""),
+            ocr_text=result_dict.get("ocr_text", ""),
+            confidence_score=confidence,
+            needs_visual_refinement=result_dict.get(
+                "needs_visual_refinement", 
+                confidence < configuration.refinement_threshold
+            ),
+            suggested_categories=result_dict.get("suggested_categories", []),
+            ingestion_error=None
+        )
+        
+    except Exception as e:
+        logger.error(f"Ingestion 실패 ({image_path}): {e}")
+        return ImageMetadata(
+            image_path=image_path,
+            description="분석 실패",
+            ocr_text="",
+            confidence_score=0.0,
+            needs_visual_refinement=True,
+            suggested_categories=[],
+            ingestion_error=str(e)
+        )
+
+
+async def batch_ingestion(
+    images: List[str],
+    config: Optional[RunnableConfig] = None
+) -> dict[str, ImageMetadata]:
+    """모든 이미지를 일괄 Ingestion하여 메타데이터 추출.
+    
+    동시성을 제한하여 Rate Limit을 방지하면서 병렬 처리합니다.
+    
+    Args:
+        images: 이미지 경로 리스트
+        config: LangGraph 런타임 설정
+        
+    Returns:
+        {image_path: ImageMetadata} 딕셔너리
+    """
+    configuration = Configuration.from_runnable_config(config)
+    
+    # 동시 처리 수 제한 (Rate Limit 방지)
+    semaphore = asyncio.Semaphore(configuration.ingestion_concurrency)
+    
+    async def process_with_semaphore(img_path: str) -> tuple[str, ImageMetadata]:
+        async with semaphore:
+            # Rate Limit 방지를 위한 약간의 딜레이
+            await asyncio.sleep(0.2)
+            metadata = await ingest_image(img_path, config)
+            return (img_path, metadata)
+    
+    # 병렬 처리
+    tasks = [process_with_semaphore(img) for img in images]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # 결과 정리
+    metadata_dict: dict[str, ImageMetadata] = {}
+    for result in results:
+        if isinstance(result, Exception):
+            logger.error(f"Batch ingestion 에러: {result}")
+            continue
+        img_path, metadata = result
+        metadata_dict[img_path] = metadata
+    
+    # 통계 로깅
+    total = len(images)
+    success = len(metadata_dict)
+    need_refinement = sum(1 for m in metadata_dict.values() if m.needs_visual_refinement)
+    
+    logger.info(
+        f"Ingestion 완료: {success}/{total}장 성공, "
+        f"{need_refinement}장 정밀분석 필요"
+    )
+    
+    return metadata_dict
 
 
 # ============================================================

@@ -1,18 +1,52 @@
 """스크린샷 분석기의 State 정의.
 
 그래프 구조:
-- 메인 그래프: initialize → classification_phase → insight_phase → final_report
+- 메인 그래프: initialize → ingestion → classification_phase → insight_phase → final_report
+- Phase 0 (Ingestion): 경량 VLM으로 메타데이터 추출 (Workflow)
 - Phase 1 (Classification): Agentic 서브그래프 (supervisor ↔ tools 반복)
 - Phase 2 (Insight): Agentic 서브그래프 (supervisor ↔ tools 반복)
 """
 
 import operator
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 from langchain_core.messages import MessageLikeRepresentation
 from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
+
+
+# ============================================================
+# Phase 0: Ingestion - 메타데이터 모델
+# ============================================================
+
+class ImageMetadata(BaseModel):
+    """경량 VLM으로 추출한 이미지 메타데이터.
+    
+    Ingestion 단계에서 모든 이미지를 저비용으로 텍스트화하여
+    이후 단계에서 이미지 없이도 분류가 가능하도록 함.
+    """
+    
+    image_path: str = Field(description="이미지 파일 경로")
+    description: str = Field(description="이미지에 대한 한 문장 요약")
+    ocr_text: str = Field(description="이미지에서 추출된 주요 텍스트 (분류 힌트)")
+    confidence_score: float = Field(
+        description="Ingestion 분석 신뢰도 (0.0~1.0)",
+        ge=0.0, 
+        le=1.0
+    )
+    needs_visual_refinement: bool = Field(
+        default=False,
+        description="텍스트만으로 판단 불가 시 True (VLM 정밀분석 필요)"
+    )
+    suggested_categories: List[str] = Field(
+        default_factory=list,
+        description="추천 카테고리 힌트 (Strategist용)"
+    )
+    ingestion_error: Optional[str] = Field(
+        default=None,
+        description="Ingestion 실패 시 에러 메시지"
+    )
 
 
 # ============================================================
@@ -169,14 +203,17 @@ class ScreenshotAnalyzerState(TypedDict):
     """메인 그래프 State.
     
     전체 워크플로우에서 공유되는 상태.
-    Phase 1 → Phase 2 → Report 순으로 데이터가 채워짐.
+    Phase 0 → Phase 1 → Phase 2 → Report 순으로 데이터가 채워짐.
     """
     
     # 입력 데이터
     images: list[str]
     existing_categories: Optional[list[str]]
     
-    # Phase 1 결과: Vision 분석
+    # Phase 0 결과: Ingestion (경량 VLM 메타데이터)
+    image_metadatas: Annotated[dict, override_reducer]  # {image_path: ImageMetadata.dict()}
+    
+    # Phase 1 결과: Vision 분석 (Refiner용, 필요한 경우만)
     vision_results: Annotated[dict, override_reducer]  # {image_path: ImageAnalysisResult.dict()}
     
     # Phase 1 결과: 분류

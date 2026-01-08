@@ -43,6 +43,7 @@ from screenshot_analyzer.state import (
 )
 from screenshot_analyzer.utils import (
     analyze_image,
+    batch_ingestion,
     get_api_key_for_model,
     parse_json_response,
     search_category_insights,
@@ -69,11 +70,46 @@ async def initialize(state: InputState, config: RunnableConfig) -> dict:
     return {
         "images": images,
         "existing_categories": existing_categories,
+        "image_metadatas": {},  # Phase 0에서 채워짐
         "vision_results": {},
         "classifications": {},
         "categories": existing_categories or [],
         "category_insights": {},
         "final_report": "",
+    }
+
+
+# ============================================================
+# Phase 0: Ingestion 노드 (Workflow)
+# ============================================================
+
+async def run_ingestion(state: ScreenshotAnalyzerState, config: RunnableConfig) -> dict:
+    """모든 이미지를 경량 VLM으로 일괄 메타데이터 추출.
+    
+    이 단계는 Agent가 아닌 순수 Workflow입니다.
+    비용 효율적인 경량 모델로 모든 이미지를 텍스트화하여
+    이후 단계에서 이미지 없이도 분류가 가능하도록 합니다.
+    
+    효과:
+    - VLM 비용 60~80% 절감
+    - Strategist/Classifier가 이미지 처리 없이 텍스트만으로 추론 가능
+    """
+    images = state.get("images", [])
+    
+    if not images:
+        return {"image_metadatas": {}}
+    
+    # 배치 Ingestion 실행
+    metadata_dict = await batch_ingestion(images, config)
+    
+    # ImageMetadata를 dict로 변환하여 State에 저장
+    serialized_metadatas = {
+        path: metadata.model_dump()
+        for path, metadata in metadata_dict.items()
+    }
+    
+    return {
+        "image_metadatas": serialized_metadatas
     }
 
 
@@ -656,7 +692,16 @@ insight_subgraph = create_insight_subgraph()
 # ============================================================
 
 def create_graph():
-    """메인 그래프를 생성합니다."""
+    """메인 그래프를 생성합니다.
+    
+    그래프 구조:
+        START → initialize → ingestion → classification_phase → insight_phase → final_report → END
+    
+    Phase 0 (Ingestion):
+        - 모든 이미지를 경량 VLM으로 메타데이터 추출
+        - 비용 60~80% 절감
+        - 이후 단계는 텍스트만으로 추론 가능
+    """
     builder = StateGraph(
         ScreenshotAnalyzerState,
         input=InputState,
@@ -665,13 +710,15 @@ def create_graph():
     
     # 노드 추가
     builder.add_node("initialize", initialize)
+    builder.add_node("ingestion", run_ingestion)  # Phase 0: 신규 추가!
     builder.add_node("classification_phase", classification_subgraph)
-    builder.add_node("insight_phase", insight_subgraph)  # 서브그래프로 교체!
+    builder.add_node("insight_phase", insight_subgraph)
     builder.add_node("final_report", generate_final_report)
     
     # 엣지 연결
     builder.add_edge(START, "initialize")
-    builder.add_edge("initialize", "classification_phase")
+    builder.add_edge("initialize", "ingestion")  # 신규: initialize → ingestion
+    builder.add_edge("ingestion", "classification_phase")  # 신규: ingestion → classification
     builder.add_edge("classification_phase", "insight_phase")
     builder.add_edge("insight_phase", "final_report")
     builder.add_edge("final_report", END)

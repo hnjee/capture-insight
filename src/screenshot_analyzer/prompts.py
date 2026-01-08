@@ -1,9 +1,73 @@
 """스크린샷 분석기의 프롬프트 템플릿.
 
 그래프 구조에 맞춰 Phase별로 분리된 프롬프트 정의.
+- Phase 0: Ingestion (경량 VLM으로 메타데이터 추출)
 - Phase 1: Classification (이미지 분석 + 분류)
 - Phase 2: Insight (웹 검색 + 인사이트 도출)
 """
+
+# ============================================================
+# Phase 0: Ingestion 프롬프트 (경량 VLM용)
+# ============================================================
+
+INGESTION_PROMPT = """너는 스크린샷 정리 전문가야. 주어진 이미지를 분석하여 이후 '폴더 분류 에이전트'가 원본 이미지 없이도 정확한 판단을 내릴 수 있도록 핵심 메타데이터를 추출해야 해.
+
+아래 JSON 구조에 맞춰서만 응답해줘:
+
+```json
+{{
+  "description": "이미지에 대한 한 문장 요약 (예: '스타벅스 아메리카노 결제 완료 영수증', '나이키 신발 상세 페이지')",
+  "ocr_text": "이미지 내에서 발견된 주요 텍스트. (상호명, 상품명, 날짜, 금액, 문서 제목 등 분류에 결정적 힌트가 되는 키워드 중심)",
+  "confidence_score": 0.0에서 1.0 사이의 수치,
+  "needs_visual_refinement": true 또는 false,
+  "suggested_categories": ["추천 카테고리1", "추천 카테고리2"]
+}}
+```
+
+## 필드 설명
+- `description`: 이미지가 '무엇'인지에 집중해서 객관적으로 작성
+- `ocr_text`: 모든 글자를 다 적지 말고, 분류에 중요한 고유명사나 수치 위주로 추출
+- `confidence_score`: 이미지 내용이 명확하고 글자가 잘 읽히면 0.8~1.0, 흐릿하거나 모호하면 0.5 이하
+- `needs_visual_refinement`: confidence_score가 {refinement_threshold} 미만이거나, 텍스트가 거의 없어 추가 분석이 필요하면 true
+- `suggested_categories`: 이 이미지가 속할 것 같은 카테고리 1~3개 제안 (예: ["영수증", "카페", "지출"])
+
+## 예시
+
+### 예시 1: 카페 영수증
+```json
+{{
+  "description": "스타벅스 아메리카노 2잔 결제 영수증",
+  "ocr_text": "스타벅스, 아메리카노, 9,000원, 2024-01-15",
+  "confidence_score": 0.95,
+  "needs_visual_refinement": false,
+  "suggested_categories": ["영수증", "카페", "지출"]
+}}
+```
+
+### 예시 2: 흐릿한 풍경 사진
+```json
+{{
+  "description": "야외 풍경 사진, 구체적 장소 불명",
+  "ocr_text": "",
+  "confidence_score": 0.35,
+  "needs_visual_refinement": true,
+  "suggested_categories": ["여행", "풍경"]
+}}
+```
+
+### 예시 3: 쇼핑 앱 상품 페이지
+```json
+{{
+  "description": "나이키 에어맥스 운동화 상품 상세 페이지",
+  "ocr_text": "Nike Air Max, 139,000원, 무료배송, 쿠팡",
+  "confidence_score": 0.92,
+  "needs_visual_refinement": false,
+  "suggested_categories": ["쇼핑", "패션", "신발"]
+}}
+```
+
+주의: JSON 형식으로만 응답하고, 다른 설명은 붙이지 마."""
+
 
 # ============================================================
 # Phase 1: Classification Supervisor 프롬프트
