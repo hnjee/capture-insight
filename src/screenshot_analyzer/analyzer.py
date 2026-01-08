@@ -1,16 +1,4 @@
-"""스크린샷 분석기 메인 그래프 구현.
-
-그래프 구조:
-    START → initialize → ingestion → classification_phase → END
-
-Phase 0 (Ingestion): 경량 VLM으로 모든 이미지 메타데이터 추출 (Workflow)
-Phase 1 (Classification): Strategist-Classifier 자율 에이전트 루프
-    - Strategist: 메타데이터 기반 폴더 구조 설계
-    - Classifier: 이미지 분류 + 피드백 루프
-    - Vision Refiner: 필요 시 VLM 정밀분석
-
-출력: classifications (분류 결과), categories (폴더 목록)
-"""
+"""스크린샷 분석기 메인 그래프 구현."""
 
 import asyncio
 import json
@@ -56,7 +44,6 @@ configurable_model = init_chat_model(
     configurable_fields=("model", "max_tokens", "api_key"),
 )
 
-
 # ============================================================
 # 메인 그래프 노드들
 # ============================================================
@@ -83,16 +70,7 @@ async def initialize(state: InputState, config: RunnableConfig) -> dict:
 # ============================================================
 
 async def run_ingestion(state: ScreenshotAnalyzerState, config: RunnableConfig) -> dict:
-    """모든 이미지를 경량 VLM으로 일괄 메타데이터 추출.
-    
-    이 단계는 Agent가 아닌 순수 Workflow입니다.
-    비용 효율적인 경량 모델로 모든 이미지를 텍스트화하여
-    이후 단계에서 이미지 없이도 분류가 가능하도록 합니다.
-    
-    효과:
-    - VLM 비용 60~80% 절감
-    - Strategist/Classifier가 이미지 처리 없이 텍스트만으로 추론 가능
-    """
+    """모든 이미지를 경량 VLM으로 일괄 메타데이터 추출."""
     images = state.get("images", [])
     
     if not images:
@@ -591,18 +569,7 @@ async def vision_refiner(
 
 
 def create_classification_subgraph():
-    """Classification Phase 서브그래프를 생성합니다.
-    
-    새로운 Strategist-Classifier 아키텍처:
-    
-    START → strategist_agent ↔ strategist_tools
-                    ↓ (StrategyComplete)
-            classifier_agent ↔ classifier_tools
-                    ↓              ↓
-                   END    ←  vision_refiner
-                    ↑              
-            (ReportAmbiguity → strategist_agent로 피드백)
-    """
+    """Classification Phase 서브그래프를 생성합니다."""
     builder = StateGraph(
         ClassificationState,
         output=ClassificationOutputState,
@@ -631,9 +598,9 @@ classification_subgraph = create_classification_subgraph()
 
 def create_graph():
     """메인 그래프를 생성합니다.
-    
+
     그래프 구조:
-        START → initialize → ingestion → classification_phase → END
+        START → initialize → ingestion → classification_strategist → END
     
     Phase 0 (Ingestion):
         - 모든 이미지를 경량 VLM으로 메타데이터 추출
@@ -657,13 +624,13 @@ def create_graph():
     # 노드 추가
     builder.add_node("initialize", initialize)
     builder.add_node("ingestion", run_ingestion)
-    builder.add_node("classification_phase", classification_subgraph)
+    builder.add_node("classification_strategist", classification_subgraph)
     
     # 엣지 연결
     builder.add_edge(START, "initialize")
     builder.add_edge("initialize", "ingestion")
-    builder.add_edge("ingestion", "classification_phase")
-    builder.add_edge("classification_phase", END)
+    builder.add_edge("ingestion", "classification_strategist")
+    builder.add_edge("classification_strategist", END)
     
     return builder.compile()
 

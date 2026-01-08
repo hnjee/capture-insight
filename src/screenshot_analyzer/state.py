@@ -1,7 +1,7 @@
 """스크린샷 분석기의 State 정의.
 
 그래프 구조:
-- 메인 그래프: initialize → ingestion → classification_phase → END
+- 메인 그래프: initialize → ingestion → classification_strategist → END
 - Phase 0 (Ingestion): 경량 VLM으로 메타데이터 추출 (Workflow)
 - Phase 1 (Classification): Strategist-Classifier 자율 에이전트 루프
   - Strategist: 폴더 구조 설계 및 수정
