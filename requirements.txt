@@ -11,9 +11,6 @@ langchain>=0.3.0
 langchain-core>=0.3.0
 langchain-openai>=0.2.0
 
-# 검색
-tavily-python>=0.5.0
-
 # 데이터 검증
 pydantic>=2.0.0
 

@@ -1,7 +1,7 @@
 [project]
 name = "capture-insight"
 version = "0.1.0"
-description = "스크린샷 자동 분류 및 인사이트 생성 AI 에이전트"
+description = "스크린샷 자동 분류 AI 에이전트 (Strategist-Classifier 자율 에이전트)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -9,7 +9,6 @@ dependencies = [
     "langchain>=0.3.0",
     "langchain-core>=0.3.0",
     "langchain-openai>=0.2.0",
-    "tavily-python>=0.5.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
     "streamlit>=1.30.0",
