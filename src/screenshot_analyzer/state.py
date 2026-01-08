@@ -3,7 +3,10 @@
 그래프 구조:
 - 메인 그래프: initialize → ingestion → classification_phase → insight_phase → final_report
 - Phase 0 (Ingestion): 경량 VLM으로 메타데이터 추출 (Workflow)
-- Phase 1 (Classification): Agentic 서브그래프 (supervisor ↔ tools 반복)
+- Phase 1 (Classification): Strategist-Classifier 자율 에이전트 루프
+  - Strategist: 폴더 구조 설계 및 수정
+  - Classifier: 이미지 분류 및 피드백
+  - Vision Refiner: 선택적 VLM 정밀분석
 - Phase 2 (Insight): Agentic 서브그래프 (supervisor ↔ tools 반복)
 """
 
@@ -92,61 +95,134 @@ class ImageClassification(BaseModel):
 
 
 # ============================================================
-# Phase 1: Classification - Structured Outputs (도구)
+# Phase 1: Strategist - Structured Outputs (도구)
 # ============================================================
 
-class ConductVisionAnalysis(BaseModel):
-    """Vision 분석 지시 (Supervisor → Worker).
+class DesignFolderStructure(BaseModel):
+    """폴더 구조 설계 도구.
     
-    이미지들을 Vision API로 분석하도록 지시.
+    Strategist가 전체 메타데이터를 조망하여 최적의 폴더 트리를 설계합니다.
+    처음부터 중복 없는 깔끔한 구조를 만들어 CategoryMerge 불필요.
     """
     
-    targets: list[str] = Field(
-        description="분석할 이미지 경로들. 'all'이면 모든 미분석 이미지"
+    folder_tree: Dict[str, List[str]] = Field(
+        description="폴더 구조. {메인폴더: [서브폴더1, 서브폴더2]} 형태"
     )
-    reason: str = Field(
-        description="이 분석을 수행하는 이유"
+    folder_descriptions: Dict[str, str] = Field(
+        description="각 폴더의 분류 기준 설명. {폴더명: 설명}"
+    )
+    reasoning: str = Field(
+        description="이 구조를 선택한 이유"
     )
 
 
-class ConductClassification(BaseModel):
-    """분류 지시 (Supervisor → Worker).
+class ReviseStructure(BaseModel):
+    """폴더 구조 수정 도구.
     
-    Vision 분석 결과를 바탕으로 이미지들을 분류하도록 지시.
+    Classifier로부터 피드백을 받아 폴더 구조를 수정합니다.
+    예: "A와 B 폴더 구분이 모호해요" → 병합 또는 기준 명확화
     """
     
-    use_existing_categories: bool = Field(
-        default=False,
-        description="기존 카테고리 체계를 사용할지 여부"
+    changes: List[Dict[str, str]] = Field(
+        description="변경 사항 리스트. [{action: 'merge'|'split'|'rename', from: ..., to: ...}]"
     )
-    reason: str = Field(
-        description="분류를 수행하는 이유"
+    new_folder_tree: Dict[str, List[str]] = Field(
+        description="수정된 폴더 구조"
+    )
+    reasoning: str = Field(
+        description="수정 이유"
     )
 
 
-class ConductCategoryMerge(BaseModel):
-    """카테고리 통합/정제 지시 (Supervisor → Worker).
+class StrategyComplete(BaseModel):
+    """Strategist 작업 완료 신호.
     
-    초벌 분류 후 유사한 카테고리들을 통합하고 정제하도록 지시.
-    예: "패션 스타일링", "의류", "패션 광고" → "패션"으로 통합
+    폴더 구조 설계가 완료되어 Classifier로 넘어갈 준비가 됨.
     """
     
+    final_folder_tree: Dict[str, List[str]] = Field(
+        description="최종 확정된 폴더 구조"
+    )
+    summary: str = Field(
+        description="설계 요약"
+    )
+
+
+# ============================================================
+# Phase 1: Classifier - Structured Outputs (도구)
+# ============================================================
+
+class ClassifyImages(BaseModel):
+    """이미지 분류 도구.
+    
+    Classifier가 메타데이터를 보고 이미지를 폴더에 배정합니다.
+    확신이 높은 이미지들만 분류하고, 모호한 경우는 피드백을 남깁니다.
+    """
+    
+    assignments: Dict[str, str] = Field(
+        description="분류 결과. {이미지경로: 폴더명}"
+    )
+    confidence_scores: Dict[str, float] = Field(
+        description="각 분류의 확신도. {이미지경로: 0.0~1.0}"
+    )
+    reasoning: str = Field(
+        description="분류 근거 요약"
+    )
+
+
+class RequestRefinement(BaseModel):
+    """VLM 정밀분석 요청 도구.
+    
+    텍스트 메타데이터만으로는 판단이 불가능할 때 VLM 정밀분석을 요청합니다.
+    needs_visual_refinement=True인 이미지 또는 Classifier가 모호하다고 판단한 이미지.
+    """
+    
+    image_paths: List[str] = Field(
+        description="정밀분석이 필요한 이미지 경로들"
+    )
+    questions: Dict[str, str] = Field(
+        description="각 이미지에 대해 VLM에게 물어볼 질문. {이미지경로: 질문}"
+    )
     reason: str = Field(
-        description="카테고리 통합을 수행하는 이유"
+        description="정밀분석이 필요한 이유"
+    )
+
+
+class ReportAmbiguity(BaseModel):
+    """폴더 구조 피드백 도구.
+    
+    Classifier가 분류 중 구조적 문제를 발견했을 때 Strategist에게 피드백합니다.
+    예: "A 폴더와 B 폴더 기준이 겹쳐요", "C 카테고리가 추가로 필요해요"
+    """
+    
+    issue_type: str = Field(
+        description="문제 유형: 'overlap'(겹침), 'missing'(누락), 'unclear'(불명확)"
+    )
+    affected_folders: List[str] = Field(
+        description="문제가 있는 폴더들"
+    )
+    affected_images: List[str] = Field(
+        description="분류가 어려운 이미지 경로들"
+    )
+    suggestion: str = Field(
+        description="해결 제안 (예: 'A와 B를 합쳐주세요', 'C 폴더를 추가해주세요')"
     )
 
 
 class ClassificationComplete(BaseModel):
     """Classification Phase 완료 신호.
     
-    모든 이미지 분석과 분류가 완료되었을 때 호출.
+    모든 이미지 분류가 완료되었을 때 호출.
     """
     
     summary: str = Field(
-        description="분류 결과 요약 (총 이미지 수, 카테고리 분포 등)"
+        description="분류 결과 요약 (총 이미지 수, 폴더별 분포 등)"
     )
-    categories_found: list[str] = Field(
-        description="발견된 카테고리 목록"
+    total_classified: int = Field(
+        description="분류 완료된 이미지 수"
+    )
+    categories_found: List[str] = Field(
+        description="최종 폴더/카테고리 목록"
     )
 
 
@@ -228,30 +304,49 @@ class ScreenshotAnalyzerState(TypedDict):
 
 
 # ============================================================
-# Phase 1: Classification State (서브그래프용)
+# Phase 1: Classification State (통합 - Strategist + Classifier)
 # ============================================================
 
 class ClassificationState(TypedDict):
-    """Classification Phase 서브그래프 State.
+    """Classification Phase 통합 State.
     
-    Supervisor ↔ Tools 반복 구조에서 사용.
+    Strategist와 Classifier가 공유하는 단일 State.
+    - Strategist: 폴더 구조 설계 및 수정
+    - Classifier: 이미지 분류 및 피드백
+    
+    LangGraph의 Partial Update 특성을 활용하여
+    각 노드는 자신이 담당하는 필드만 업데이트합니다.
     """
     
-    # Supervisor 통신용 메시지
+    # === Agent 통신용 메시지 ===
     messages: Annotated[list[MessageLikeRepresentation], operator.add]
     
-    # 입력 (메인 State에서 전달받음)
+    # === Workflow 데이터 (Ingestion에서 전달받음) ===
     images: list[str]
+    image_metadatas: dict  # {image_path: ImageMetadata.dict()}
     existing_categories: Optional[list[str]]
     
-    # 작업 진행 상태
-    analyzed_images: list[str]  # 분석 완료된 이미지들
-    iteration_count: int  # 반복 횟수
+    # === Strategist 관리 데이터 ===
+    current_folder_tree: Dict[str, List[str]]  # {메인폴더: [서브폴더들]}
+    folder_descriptions: Dict[str, str]  # {폴더명: 분류 기준}
     
-    # 결과 (메인 State로 반환)
-    vision_results: Annotated[dict, override_reducer]
-    classifications: Annotated[dict, override_reducer]
-    categories: list[str]
+    # === Classifier 관리 데이터 ===
+    assignments: Annotated[dict, override_reducer]  # {image_path: folder_name}
+    pending_images: list[str]  # 아직 분류 안 된 이미지들
+    refinement_results: Annotated[dict, override_reducer]  # VLM 정밀분석 결과
+    
+    # === 피드백 루프 데이터 ===
+    classification_feedback: list[str]  # Classifier → Strategist 피드백
+    
+    # === 안정성 및 제어 ===
+    strategy_iteration: int  # Strategist 반복 횟수 (무한루프 방지)
+    classify_iteration: int  # Classifier 반복 횟수
+    previous_folder_tree: Optional[Dict]  # 수렴 판단용
+    
+    # === 제어 신호 ===
+    is_converged: bool  # 수렴 완료 여부
+    current_phase: str  # "strategist" | "classifier" | "refiner" | "done"
+    needs_strategy_revision: bool  # Classifier가 구조 수정 요청했는지
 
 
 class ClassificationOutputState(TypedDict):
@@ -260,9 +355,9 @@ class ClassificationOutputState(TypedDict):
     서브그래프 완료 시 메인 그래프로 반환하는 데이터.
     """
     
-    vision_results: dict
-    classifications: dict
-    categories: list[str]
+    classifications: dict  # assignments를 변환하여 반환
+    categories: list[str]  # folder_tree의 키들
+    vision_results: dict  # refinement_results
 
 
 # ============================================================

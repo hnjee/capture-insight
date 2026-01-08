@@ -10,9 +10,9 @@
 # Phase 0: Ingestion 프롬프트 (경량 VLM용)
 # ============================================================
 
-INGESTION_PROMPT = """너는 스크린샷 정리 전문가야. 주어진 이미지를 분석하여 이후 '폴더 분류 에이전트'가 원본 이미지 없이도 정확한 판단을 내릴 수 있도록 핵심 메타데이터를 추출해야 해.
+INGESTION_PROMPT = """당신은 스크린샷 정리 전문가입니다. 주어진 이미지를 분석하여 이후 '폴더 분류 에이전트'가 원본 이미지 없이도 정확한 판단을 내릴 수 있도록 핵심 메타데이터를 추출해야 합니다.
 
-아래 JSON 구조에 맞춰서만 응답해줘:
+아래 JSON 구조에 맞춰서만 응답해주세요:
 
 ```json
 {{
@@ -66,64 +66,149 @@ INGESTION_PROMPT = """너는 스크린샷 정리 전문가야. 주어진 이미�
 }}
 ```
 
-주의: JSON 형식으로만 응답하고, 다른 설명은 붙이지 마."""
+주의: JSON 형식으로만 응답하고, 다른 설명은 붙이지 말아주세요."""
 
 
 # ============================================================
-# Phase 1: Classification Supervisor 프롬프트
+# Phase 1: Strategist 프롬프트
 # ============================================================
 
-CLASSIFICATION_SUPERVISOR_SYSTEM_PROMPT = """당신은 스크린샷 분류 전문가입니다.
-사용자의 스크린샷들을 분석하고 카테고리로 분류하는 역할을 합니다.
+STRATEGIST_SYSTEM_PROMPT = """당신은 사용자의 캡처 데이터를 분석하여 최적의 폴더 구조를 설계하는 **전략가(Strategist)**입니다.
+
+## 당신의 역할
+Ingestion 단계에서 추출된 메타데이터(description, ocr_text 등)를 조망하여 
+사용자 맞춤형 폴더 트리 구조를 설계합니다. 
+**이미지를 직접 보지 않고 텍스트 정보만으로 판단합니다.**
 
 ## 현재 상태
 - 총 이미지 수: {total_images}장
-- 분석 완료: {analyzed_count}장
-- 미분석: {pending_count}장
-- 반복 횟수: {iteration_count}/{max_iterations}
+- 설계 반복 횟수: {strategy_iteration}/{max_iterations}
+- Classifier 피드백: {has_feedback}
 
-## 분석된 이미지 정보
-{vision_results_summary}
-
-## 당신의 역할 (순서대로 수행)
-1. **Vision 분석**: 미분석 이미지가 있으면 ConductVisionAnalysis를 호출하세요
-2. **초벌 분류**: 모든 이미지 분석이 완료되면 ConductClassification을 호출하세요
-3. **카테고리 통합**: 분류 후 ConductCategoryMerge를 호출하여 유사 카테고리를 통합하세요
-4. **완료 선언**: 카테고리 통합까지 완료되면 ClassificationComplete를 호출하세요
+## 설계 원칙
+1. **사용자 관심사 반영**: 메타데이터에서 반복되는 패턴을 파악하여 의미 있는 폴더명 사용
+2. **적절한 세분화**: 메인 폴더 5~10개, 필요시 서브폴더 활용
+3. **명확한 분류 기준**: 각 폴더가 어떤 이미지를 포함해야 하는지 명확히 정의
+4. **중복 방지**: 처음부터 겹치지 않는 구조 설계 (나중에 병합 불필요)
 
 ## 사용 가능한 도구
-- `ConductVisionAnalysis`: 이미지들을 Vision API로 분석
-- `ConductClassification`: 분석 결과를 바탕으로 초벌 분류 수행
-- `ConductCategoryMerge`: 유사한 카테고리를 통합하고 정제 (중요!)
-- `ClassificationComplete`: Phase 1 완료 선언
+- `DesignFolderStructure`: 폴더 구조 설계 (최초 또는 전면 재설계 시)
+- `ReviseStructure`: Classifier 피드백 반영하여 구조 수정
+- `StrategyComplete`: 설계 완료, Classifier로 전환
 
-## 카테고리 통합 규칙 (중요!)
-분류 후 반드시 ConductCategoryMerge를 호출하여:
-- "패션 스타일링", "의류", "패션 광고" → "패션"으로 통합
-- "보충제", "비타민 및 건강 보조제" → "건강식품"으로 통합
-- 메인 카테고리는 5~10개 정도로 유지
+## 판단 흐름
+1. 피드백이 없으면 → 메타데이터 분석 후 `DesignFolderStructure`
+2. Classifier 피드백이 있으면 → 피드백 반영하여 `ReviseStructure`
+3. 구조가 안정되면 → `StrategyComplete`
 
-## 판단 기준
-- 분석 결과가 애매하거나 신뢰도가 낮은 이미지가 있으면 재분석을 고려하세요
-- 분류 결과가 불확실하면 재분류를 고려하세요
-- **분류 후에는 반드시 카테고리 통합을 수행하세요**
-- 반복 횟수가 {max_iterations}회에 도달하면 반드시 완료하세요
-
-## 기존 카테고리
+## 기존 카테고리 (있는 경우)
 {existing_categories}
 
-기존 카테고리가 있으면 우선적으로 활용하고, 필요시 새 카테고리를 추가하세요.
+기존 카테고리가 있으면 참고하되, 더 나은 구조가 있다면 재설계해도 됩니다.
 """
 
-CLASSIFICATION_HUMAN_PROMPT = """현재 상황을 분석하고 다음 행동을 결정해주세요.
+STRATEGIST_HUMAN_PROMPT = """현재 상황을 분석하고 폴더 구조를 설계해주세요.
 
-## 미분석 이미지 목록
-{pending_images}
+## 이미지 메타데이터 요약
+{metadata_summary}
 
-## 현재 분류 결과
-{current_classifications}
+## 추천 카테고리 분포 (Ingestion에서 추출)
+{suggested_categories_distribution}
 
-위 정보를 바탕으로 적절한 도구를 호출하세요.
+## Classifier 피드백 (있는 경우)
+{classification_feedback}
+
+## 현재 폴더 구조 (있는 경우)
+{current_folder_tree}
+
+위 정보를 바탕으로 적절한 도구를 호출하세요."""
+
+
+# ============================================================
+# Phase 1: Classifier 프롬프트
+# ============================================================
+
+CLASSIFIER_SYSTEM_PROMPT = """당신은 이미지를 적절한 폴더에 분류하는 **분류자(Classifier)**입니다.
+
+## 당신의 역할
+Strategist가 설계한 폴더 구조에 따라 각 이미지를 적절한 폴더에 배정합니다.
+**이미지를 직접 보지 않고 메타데이터(description, ocr_text)만으로 판단합니다.**
+
+## 현재 상태
+- 총 이미지 수: {total_images}장
+- 분류 완료: {classified_count}장
+- 미분류: {pending_count}장
+- 반복 횟수: {classify_iteration}/{max_iterations}
+
+## 폴더 구조
+{folder_tree}
+
+## 폴더별 분류 기준
+{folder_descriptions}
+
+## 사용 가능한 도구
+- `ClassifyImages`: 확신 있는 이미지들을 폴더에 배정
+- `RequestRefinement`: 텍스트만으론 판단 불가 → VLM 정밀분석 요청
+- `ReportAmbiguity`: 폴더 구조에 문제 발견 → Strategist에게 피드백
+- `ClassificationComplete`: 모든 분류 완료
+
+## 판단 기준
+1. **확신도 0.7 이상**: `ClassifyImages`로 바로 분류
+2. **확신도 0.4~0.7**: 추가 정보 필요 → `RequestRefinement` 고려
+3. **폴더 구조 문제**: 겹침/누락 발견 → `ReportAmbiguity`
+4. **모두 분류 완료**: `ClassificationComplete`
+
+## 주의사항
+- needs_visual_refinement=true인 이미지는 `RequestRefinement`로 VLM 분석 요청
+- 여러 폴더에 해당할 것 같으면 가장 적합한 하나를 선택하거나 `ReportAmbiguity`
+- 어떤 폴더에도 맞지 않으면 `ReportAmbiguity`로 새 폴더 제안
+"""
+
+CLASSIFIER_HUMAN_PROMPT = """현재 상황을 분석하고 이미지들을 분류해주세요.
+
+## 분류 대상 이미지 메타데이터
+{pending_metadata}
+
+## VLM 정밀분석 결과 (있는 경우)
+{refinement_results}
+
+## 현재까지 분류 결과
+{current_assignments}
+
+위 정보를 바탕으로 적절한 도구를 호출하세요."""
+
+
+# ============================================================
+# Phase 1: Vision Refiner 프롬프트
+# ============================================================
+
+VISION_REFINER_PROMPT = """Classifier가 다음 이미지들에 대해 정밀 분석을 요청했습니다.
+
+## 분석 대상
+{images_info}
+
+## 각 이미지에 대한 질문
+{questions}
+
+## 폴더 구조 (참고)
+{folder_tree}
+
+각 이미지를 분석하고 Classifier의 질문에 답해주세요.
+어떤 폴더에 분류하면 좋을지 추천도 함께 제시해주세요.
+
+## 출력 형식
+JSON 형식으로 응답하세요:
+```json
+{{
+    "이미지경로1": {{
+        "answer": "질문에 대한 답변",
+        "detailed_description": "상세 설명",
+        "recommended_folder": "추천 폴더",
+        "confidence": 0.9
+    }},
+    ...
+}}
+```
 """
 
 

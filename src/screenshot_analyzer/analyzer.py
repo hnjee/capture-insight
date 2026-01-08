@@ -1,9 +1,14 @@
 """스크린샷 분석기 메인 그래프 구현.
 
 그래프 구조:
-    START → initialize → classification_phase → insight_phase → final_report → END
+    START → initialize → ingestion → classification_phase → insight_phase → final_report → END
 
-각 Phase는 Agentic 서브그래프로 구현되어 supervisor ↔ tools 반복 구조를 가짐.
+Phase 0 (Ingestion): 경량 VLM으로 모든 이미지 메타데이터 추출 (Workflow)
+Phase 1 (Classification): Strategist-Classifier 자율 에이전트 루프
+    - Strategist: 메타데이터 기반 폴더 구조 설계
+    - Classifier: 이미지 분류 + 피드백 루프
+    - Vision Refiner: 필요 시 VLM 정밀분석
+Phase 2 (Insight): 카테고리별 웹 검색 인사이트 수집
 """
 
 import asyncio
@@ -18,28 +23,32 @@ from langgraph.types import Command
 
 from screenshot_analyzer.configuration import Configuration
 from screenshot_analyzer.prompts import (
-    CATEGORY_MERGE_PROMPT,
-    CLASSIFICATION_HUMAN_PROMPT,
-    CLASSIFICATION_PROMPT,
-    CLASSIFICATION_SUPERVISOR_SYSTEM_PROMPT,
+    CLASSIFIER_HUMAN_PROMPT,
+    CLASSIFIER_SYSTEM_PROMPT,
     FINAL_REPORT_PROMPT,
     INSIGHT_HUMAN_PROMPT,
     INSIGHT_SUPERVISOR_SYSTEM_PROMPT,
     SEARCH_INSIGHT_PROMPT,
+    STRATEGIST_HUMAN_PROMPT,
+    STRATEGIST_SYSTEM_PROMPT,
+    VISION_REFINER_PROMPT,
 )
 from screenshot_analyzer.state import (
     ClassificationComplete,
     ClassificationOutputState,
     ClassificationState,
-    ConductCategoryMerge,
-    ConductClassification,
+    ClassifyImages,
     ConductSearch,
-    ConductVisionAnalysis,
+    DesignFolderStructure,
     InputState,
     InsightComplete,
     InsightOutputState,
     InsightState,
+    ReportAmbiguity,
+    RequestRefinement,
+    ReviseStructure,
     ScreenshotAnalyzerState,
+    StrategyComplete,
 )
 from screenshot_analyzer.utils import (
     analyze_image,
@@ -70,11 +79,15 @@ async def initialize(state: InputState, config: RunnableConfig) -> dict:
     return {
         "images": images,
         "existing_categories": existing_categories,
+        # Phase 0: Ingestion
         "image_metadatas": {},  # Phase 0에서 채워짐
+        # Phase 1: Classification (Strategist-Classifier)
         "vision_results": {},
         "classifications": {},
         "categories": existing_categories or [],
+        # Phase 2: Insight
         "category_insights": {},
+        # Final
         "final_report": "",
     }
 
@@ -162,42 +175,75 @@ async def generate_final_report(state: ScreenshotAnalyzerState, config: Runnable
 
 
 # ============================================================
-# Phase 1: Classification 서브그래프
+# Phase 1: Strategist-Classifier 서브그래프
 # ============================================================
 
-async def classification_supervisor(
+def _summarize_metadata(image_metadatas: dict) -> str:
+    """메타데이터를 요약 문자열로 변환."""
+    if not image_metadatas:
+        return "메타데이터 없음"
+    
+    summaries = []
+    for path, meta in list(image_metadatas.items())[:20]:  # 최대 20개만 표시
+        if isinstance(meta, dict):
+            desc = meta.get("description", "설명 없음")
+            ocr = meta.get("ocr_text", "")[:50]
+            conf = meta.get("confidence_score", 0)
+            needs_refine = meta.get("needs_visual_refinement", False)
+            summaries.append(f"- {path}: {desc} (OCR: {ocr}..., 신뢰도: {conf}, VLM필요: {needs_refine})")
+    
+    if len(image_metadatas) > 20:
+        summaries.append(f"... 외 {len(image_metadatas) - 20}장")
+    
+    return "\n".join(summaries)
+
+
+def _get_suggested_categories_distribution(image_metadatas: dict) -> str:
+    """추천 카테고리 분포를 계산."""
+    from collections import Counter
+    all_categories = []
+    for meta in image_metadatas.values():
+        if isinstance(meta, dict):
+            all_categories.extend(meta.get("suggested_categories", []))
+    
+    counter = Counter(all_categories)
+    return json.dumps(dict(counter.most_common(15)), ensure_ascii=False, indent=2)
+
+
+async def strategist_agent(
     state: ClassificationState, 
     config: RunnableConfig
-) -> Command[Literal["classification_tools"]]:
-    """Classification Phase의 Supervisor 노드."""
+) -> Command[Literal["strategist_tools"]]:
+    """Strategist Agent: 폴더 구조 설계.
+    
+    메타데이터를 조망하여 최적의 폴더 트리를 설계합니다.
+    Classifier로부터 피드백이 오면 구조를 수정합니다.
+    """
     configuration = Configuration.from_runnable_config(config)
     
     # 현재 상태 추출
     images = state.get("images", [])
-    analyzed_images = state.get("analyzed_images", [])
-    vision_results = state.get("vision_results", {})
-    classifications = state.get("classifications", {})
+    image_metadatas = state.get("image_metadatas", {})
     existing_categories = state.get("existing_categories", [])
-    iteration_count = state.get("iteration_count", 0)
-    
-    # 미분석 이미지 계산
-    pending_images = [img for img in images if img not in analyzed_images]
+    strategy_iteration = state.get("strategy_iteration", 0)
+    classification_feedback = state.get("classification_feedback", [])
+    current_folder_tree = state.get("current_folder_tree", {})
     
     # 시스템 프롬프트 구성
-    system_prompt = CLASSIFICATION_SUPERVISOR_SYSTEM_PROMPT.format(
+    system_prompt = STRATEGIST_SYSTEM_PROMPT.format(
         total_images=len(images),
-        analyzed_count=len(analyzed_images),
-        pending_count=len(pending_images),
-        iteration_count=iteration_count,
+        strategy_iteration=strategy_iteration,
         max_iterations=configuration.max_analysis_iterations,
-        vision_results_summary=json.dumps(vision_results, ensure_ascii=False, indent=2) if vision_results else "없음",
+        has_feedback="있음" if classification_feedback else "없음",
         existing_categories=", ".join(existing_categories) if existing_categories else "없음",
     )
     
     # Human 프롬프트 구성
-    human_prompt = CLASSIFICATION_HUMAN_PROMPT.format(
-        pending_images=", ".join(pending_images) if pending_images else "없음 (모두 분석 완료)",
-        current_classifications=json.dumps(classifications, ensure_ascii=False, indent=2) if classifications else "없음",
+    human_prompt = STRATEGIST_HUMAN_PROMPT.format(
+        metadata_summary=_summarize_metadata(image_metadatas),
+        suggested_categories_distribution=_get_suggested_categories_distribution(image_metadatas),
+        classification_feedback="\n".join(classification_feedback) if classification_feedback else "없음",
+        current_folder_tree=json.dumps(current_folder_tree, ensure_ascii=False, indent=2) if current_folder_tree else "없음",
     )
     
     # 모델 설정
@@ -208,12 +254,12 @@ async def classification_supervisor(
     }
     
     # 도구 바인딩
-    tools = [ConductVisionAnalysis, ConductClassification, ConductCategoryMerge, ClassificationComplete]
+    tools = [DesignFolderStructure, ReviseStructure, StrategyComplete]
     model_with_tools = configurable_model.bind_tools(tools).with_config(model_config)
     
     # 메시지 구성
     messages = state.get("messages", [])
-    if not messages:
+    if not messages or state.get("current_phase") != "strategist":
         messages = [SystemMessage(content=system_prompt)]
     messages.append(HumanMessage(content=human_prompt))
     
@@ -221,19 +267,195 @@ async def classification_supervisor(
     response = await model_with_tools.ainvoke(messages)
     
     return Command(
-        goto="classification_tools",
+        goto="strategist_tools",
         update={
             "messages": [response],
-            "iteration_count": iteration_count + 1,
+            "strategy_iteration": strategy_iteration + 1,
+            "current_phase": "strategist",
         }
     )
 
 
-async def classification_tools(
+async def strategist_tools(
     state: ClassificationState, 
     config: RunnableConfig
-) -> Command[Literal["classification_supervisor", "__end__"]]:
-    """Classification Phase의 도구 실행 노드."""
+) -> Command[Literal["strategist_agent", "classifier_agent", "__end__"]]:
+    """Strategist의 도구 실행."""
+    configuration = Configuration.from_runnable_config(config)
+    messages = state.get("messages", [])
+    most_recent_message = messages[-1] if messages else None
+    
+    # 도구 호출이 없으면 Classifier로 전환
+    if not most_recent_message or not most_recent_message.tool_calls:
+        return Command(
+            goto="classifier_agent",
+            update={"current_phase": "classifier"}
+        )
+    
+    # 반복 횟수 체크
+    strategy_iteration = state.get("strategy_iteration", 0)
+    if strategy_iteration > configuration.max_analysis_iterations:
+        # 강제 종료
+        return Command(
+            goto=END,
+            update={
+                "classifications": state.get("assignments", {}),
+                "categories": list(state.get("current_folder_tree", {}).keys()),
+                "vision_results": state.get("refinement_results", {}),
+            }
+        )
+    
+    tool_messages = []
+    update_payload = {}
+    goto_classifier = False
+    should_end = False
+    
+    for tool_call in most_recent_message.tool_calls:
+        tool_name = tool_call["name"]
+        tool_args = tool_call["args"]
+        
+        if tool_name == "DesignFolderStructure":
+            folder_tree = tool_args.get("folder_tree", {})
+            folder_descriptions = tool_args.get("folder_descriptions", {})
+            reasoning = tool_args.get("reasoning", "")
+            
+            update_payload["current_folder_tree"] = folder_tree
+            update_payload["folder_descriptions"] = folder_descriptions
+            update_payload["previous_folder_tree"] = state.get("current_folder_tree")
+            
+            # 미분류 이미지 설정
+            images = state.get("images", [])
+            update_payload["pending_images"] = images
+            
+            tool_messages.append(ToolMessage(
+                content=f"폴더 구조 설계 완료\n구조: {json.dumps(folder_tree, ensure_ascii=False)}\n이유: {reasoning}",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+            ))
+            
+        elif tool_name == "ReviseStructure":
+            new_folder_tree = tool_args.get("new_folder_tree", {})
+            changes = tool_args.get("changes", [])
+            reasoning = tool_args.get("reasoning", "")
+            
+            update_payload["previous_folder_tree"] = state.get("current_folder_tree")
+            update_payload["current_folder_tree"] = new_folder_tree
+            update_payload["classification_feedback"] = []  # 피드백 처리 완료
+            
+            tool_messages.append(ToolMessage(
+                content=f"폴더 구조 수정 완료\n변경: {json.dumps(changes, ensure_ascii=False)}\n이유: {reasoning}",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+            ))
+            
+        elif tool_name == "StrategyComplete":
+            goto_classifier = True
+            final_folder_tree = tool_args.get("final_folder_tree", state.get("current_folder_tree", {}))
+            summary = tool_args.get("summary", "")
+            
+            update_payload["current_folder_tree"] = final_folder_tree
+            update_payload["is_converged"] = False  # Classifier가 확인할 때까지
+            
+            tool_messages.append(ToolMessage(
+                content=f"Strategist 완료: {summary}\nClassifier로 전환합니다.",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+            ))
+    
+    update_payload["messages"] = tool_messages
+    
+    if goto_classifier:
+        return Command(
+            goto="classifier_agent",
+            update={**update_payload, "current_phase": "classifier", "classify_iteration": 0}
+        )
+    
+    return Command(
+        goto="strategist_agent",
+        update=update_payload,
+    )
+
+
+async def classifier_agent(
+    state: ClassificationState, 
+    config: RunnableConfig
+) -> Command[Literal["classifier_tools"]]:
+    """Classifier Agent: 이미지 분류.
+    
+    Strategist가 설계한 폴더 구조에 따라 이미지를 분류합니다.
+    모호한 경우 피드백을 생성하거나 VLM 정밀분석을 요청합니다.
+    """
+    configuration = Configuration.from_runnable_config(config)
+    
+    # 현재 상태 추출
+    images = state.get("images", [])
+    image_metadatas = state.get("image_metadatas", {})
+    current_folder_tree = state.get("current_folder_tree", {})
+    folder_descriptions = state.get("folder_descriptions", {})
+    assignments = state.get("assignments", {})
+    pending_images = state.get("pending_images", images)
+    refinement_results = state.get("refinement_results", {})
+    classify_iteration = state.get("classify_iteration", 0)
+    
+    # 미분류 이미지의 메타데이터
+    pending_metadata = {
+        path: image_metadatas.get(path, {})
+        for path in pending_images[:30]  # 한 번에 30개까지만 처리
+    }
+    
+    # 시스템 프롬프트 구성
+    system_prompt = CLASSIFIER_SYSTEM_PROMPT.format(
+        total_images=len(images),
+        classified_count=len(assignments),
+        pending_count=len(pending_images),
+        classify_iteration=classify_iteration,
+        max_iterations=configuration.max_analysis_iterations,
+        folder_tree=json.dumps(current_folder_tree, ensure_ascii=False, indent=2),
+        folder_descriptions=json.dumps(folder_descriptions, ensure_ascii=False, indent=2),
+    )
+    
+    # Human 프롬프트 구성
+    human_prompt = CLASSIFIER_HUMAN_PROMPT.format(
+        pending_metadata=json.dumps(pending_metadata, ensure_ascii=False, indent=2),
+        refinement_results=json.dumps(refinement_results, ensure_ascii=False, indent=2) if refinement_results else "없음",
+        current_assignments=json.dumps(assignments, ensure_ascii=False, indent=2) if assignments else "없음",
+    )
+    
+    # 모델 설정
+    model_config = {
+        "model": configuration.analysis_model,
+        "max_tokens": configuration.max_tokens,
+        "api_key": get_api_key_for_model(configuration.analysis_model, config),
+    }
+    
+    # 도구 바인딩
+    tools = [ClassifyImages, RequestRefinement, ReportAmbiguity, ClassificationComplete]
+    model_with_tools = configurable_model.bind_tools(tools).with_config(model_config)
+    
+    # 메시지 구성
+    messages = state.get("messages", [])
+    if state.get("current_phase") != "classifier":
+        messages = [SystemMessage(content=system_prompt)]
+    messages.append(HumanMessage(content=human_prompt))
+    
+    # LLM 호출
+    response = await model_with_tools.ainvoke(messages)
+    
+    return Command(
+        goto="classifier_tools",
+        update={
+            "messages": [response],
+            "classify_iteration": classify_iteration + 1,
+            "current_phase": "classifier",
+        }
+    )
+
+
+async def classifier_tools(
+    state: ClassificationState, 
+    config: RunnableConfig
+) -> Command[Literal["classifier_agent", "strategist_agent", "vision_refiner", "__end__"]]:
+    """Classifier의 도구 실행."""
     configuration = Configuration.from_runnable_config(config)
     messages = state.get("messages", [])
     most_recent_message = messages[-1] if messages else None
@@ -243,210 +465,221 @@ async def classification_tools(
         return Command(
             goto=END,
             update={
-                "vision_results": state.get("vision_results", {}),
-                "classifications": state.get("classifications", {}),
-                "categories": state.get("categories", []),
+                "classifications": state.get("assignments", {}),
+                "categories": list(state.get("current_folder_tree", {}).keys()),
+                "vision_results": state.get("refinement_results", {}),
             }
         )
     
     # 반복 횟수 체크
-    iteration_count = state.get("iteration_count", 0)
-    if iteration_count > configuration.max_analysis_iterations:
+    classify_iteration = state.get("classify_iteration", 0)
+    if classify_iteration > configuration.max_analysis_iterations:
         return Command(
             goto=END,
             update={
-                "vision_results": state.get("vision_results", {}),
-                "classifications": state.get("classifications", {}),
-                "categories": state.get("categories", []),
+                "classifications": state.get("assignments", {}),
+                "categories": list(state.get("current_folder_tree", {}).keys()),
+                "vision_results": state.get("refinement_results", {}),
             }
         )
     
     tool_messages = []
     update_payload = {}
+    goto_strategist = False
+    goto_refiner = False
     should_end = False
     
     for tool_call in most_recent_message.tool_calls:
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         
-        if tool_name == "ConductVisionAnalysis":
-            # Vision API로 이미지 분석
-            targets = tool_args.get("targets", [])
-            images = state.get("images", [])
+        if tool_name == "ClassifyImages":
+            new_assignments = tool_args.get("assignments", {})
+            confidence_scores = tool_args.get("confidence_scores", {})
+            reasoning = tool_args.get("reasoning", "")
             
-            if targets == ["all"] or "all" in targets:
-                analyzed = state.get("analyzed_images", [])
-                targets = [img for img in images if img not in analyzed]
+            # 기존 assignments에 병합
+            current_assignments = state.get("assignments", {})
+            merged_assignments = {**current_assignments, **new_assignments}
+            update_payload["assignments"] = merged_assignments
             
-            if targets:
-                # 순차 처리 + Rate Limit 재시도 로직
-                new_vision_results = {}
-                new_analyzed = []
-                
-                for img in targets:
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            result = await analyze_image(img, config)
-                            new_vision_results[img] = result.model_dump()
-                            new_analyzed.append(img)
-                            break  # 성공하면 다음 이미지로
-                        except Exception as e:
-                            error_msg = str(e)
-                            if "429" in error_msg or "rate_limit" in error_msg.lower():
-                                # Rate Limit - 잠시 대기 후 재시도
-                                wait_time = (attempt + 1) * 5  # 5초, 10초, 15초
-                                await asyncio.sleep(wait_time)
-                                if attempt == max_retries - 1:
-                                    # 마지막 시도도 실패하면 건너뛰기
-                                    pass
-                            else:
-                                # 다른 에러는 건너뛰기
-                                break
-                    
-                    # 이미지 간 딜레이 (Rate Limit 방지)
-                    await asyncio.sleep(1)
-                
-                update_payload["vision_results"] = new_vision_results
-                update_payload["analyzed_images"] = state.get("analyzed_images", []) + new_analyzed
-                
-                tool_messages.append(ToolMessage(
-                    content=f"Vision 분석 완료: {len(new_analyzed)}장 분석됨\n결과: {json.dumps(new_vision_results, ensure_ascii=False, indent=2)}",
-                    name=tool_name,
-                    tool_call_id=tool_call["id"],
-                ))
-            else:
-                tool_messages.append(ToolMessage(
-                    content="분석할 이미지가 없습니다.",
-                    name=tool_name,
-                    tool_call_id=tool_call["id"],
-                ))
-        
-        elif tool_name == "ConductClassification":
-            vision_results = {**state.get("vision_results", {}), **update_payload.get("vision_results", {})}
-            existing_categories = state.get("existing_categories", [])
-            
-            if vision_results:
-                classification_prompt = CLASSIFICATION_PROMPT.format(
-                    vision_results=json.dumps(vision_results, ensure_ascii=False, indent=2),
-                    existing_categories=", ".join(existing_categories) if existing_categories else "없음",
-                )
-                
-                model_config = {
-                    "model": configuration.analysis_model,
-                    "max_tokens": configuration.max_tokens,
-                    "api_key": get_api_key_for_model(configuration.analysis_model, config),
-                }
-                classification_model = configurable_model.with_config(model_config)
-                
-                response = await classification_model.ainvoke([
-                    HumanMessage(content=classification_prompt)
-                ])
-                
-                result_dict = parse_json_response(response.content)
-                classifications = result_dict.get("classifications", {})
-                categories = result_dict.get("categories", [])
-                
-                update_payload["classifications"] = classifications
-                update_payload["categories"] = categories
-                
-                tool_messages.append(ToolMessage(
-                    content=f"분류 완료: {len(classifications)}장 분류됨\n카테고리: {categories}",
-                    name=tool_name,
-                    tool_call_id=tool_call["id"],
-                ))
-            else:
-                tool_messages.append(ToolMessage(
-                    content="분류할 Vision 분석 결과가 없습니다.",
-                    name=tool_name,
-                    tool_call_id=tool_call["id"],
-                ))
-        
-        elif tool_name == "ConductCategoryMerge":
-            # 카테고리 통합/정제 수행
-            current_classifications = {**state.get("classifications", {}), **update_payload.get("classifications", {})}
-            current_categories = update_payload.get("categories", state.get("categories", []))
-            
-            if current_classifications:
-                merge_prompt = CATEGORY_MERGE_PROMPT.format(
-                    current_classifications=json.dumps(current_classifications, ensure_ascii=False, indent=2),
-                    current_categories=", ".join(current_categories) if current_categories else "없음",
-                )
-                
-                model_config = {
-                    "model": configuration.analysis_model,
-                    "max_tokens": configuration.max_tokens,
-                    "api_key": get_api_key_for_model(configuration.analysis_model, config),
-                }
-                merge_model = configurable_model.with_config(model_config)
-                
-                response = await merge_model.ainvoke([
-                    HumanMessage(content=merge_prompt)
-                ])
-                
-                result_dict = parse_json_response(response.content)
-                merged_classifications = result_dict.get("merged_classifications", current_classifications)
-                final_categories = result_dict.get("final_categories", current_categories)
-                merge_summary = result_dict.get("merge_summary", {})
-                
-                # 병합된 결과로 업데이트 (완전 교체)
-                update_payload["classifications"] = {"type": "override", "value": merged_classifications}
-                update_payload["categories"] = final_categories
-                
-                tool_messages.append(ToolMessage(
-                    content=f"카테고리 통합 완료\n병합 요약: {json.dumps(merge_summary, ensure_ascii=False, indent=2)}\n최종 카테고리: {final_categories}",
-                    name=tool_name,
-                    tool_call_id=tool_call["id"],
-                ))
-            else:
-                tool_messages.append(ToolMessage(
-                    content="통합할 분류 결과가 없습니다. 먼저 ConductClassification을 실행하세요.",
-                    name=tool_name,
-                    tool_call_id=tool_call["id"],
-                ))
-        
-        elif tool_name == "ClassificationComplete":
-            should_end = True
-            summary = tool_args.get("summary", "분류 완료")
-            categories_found = tool_args.get("categories_found", update_payload.get("categories", []))
+            # pending_images 업데이트
+            pending = state.get("pending_images", [])
+            new_pending = [p for p in pending if p not in new_assignments]
+            update_payload["pending_images"] = new_pending
             
             tool_messages.append(ToolMessage(
-                content=f"Classification Phase 완료: {summary}",
+                content=f"분류 완료: {len(new_assignments)}장\n남은 이미지: {len(new_pending)}장\n이유: {reasoning}",
                 name=tool_name,
                 tool_call_id=tool_call["id"],
             ))
             
-            update_payload["categories"] = categories_found
+        elif tool_name == "RequestRefinement":
+            image_paths = tool_args.get("image_paths", [])
+            questions = tool_args.get("questions", {})
+            reason = tool_args.get("reason", "")
+            
+            # VLM 정밀분석 요청 저장
+            update_payload["refinement_requests"] = {
+                "image_paths": image_paths,
+                "questions": questions,
+            }
+            goto_refiner = True
+            
+            tool_messages.append(ToolMessage(
+                content=f"VLM 정밀분석 요청: {len(image_paths)}장\n이유: {reason}",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+            ))
+            
+        elif tool_name == "ReportAmbiguity":
+            issue_type = tool_args.get("issue_type", "")
+            affected_folders = tool_args.get("affected_folders", [])
+            affected_images = tool_args.get("affected_images", [])
+            suggestion = tool_args.get("suggestion", "")
+            
+            # 피드백 저장
+            feedback = f"[{issue_type}] 폴더: {affected_folders}, 이미지: {len(affected_images)}장, 제안: {suggestion}"
+            current_feedback = state.get("classification_feedback", [])
+            update_payload["classification_feedback"] = current_feedback + [feedback]
+            update_payload["needs_strategy_revision"] = True
+            goto_strategist = True
+            
+            tool_messages.append(ToolMessage(
+                content=f"Strategist에게 피드백 전달: {feedback}",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+            ))
+            
+        elif tool_name == "ClassificationComplete":
+            should_end = True
+            summary = tool_args.get("summary", "분류 완료")
+            total_classified = tool_args.get("total_classified", len(state.get("assignments", {})))
+            categories_found = tool_args.get("categories_found", list(state.get("current_folder_tree", {}).keys()))
+            
+            tool_messages.append(ToolMessage(
+                content=f"Classification 완료: {summary}\n총 {total_classified}장 분류됨",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+            ))
     
     update_payload["messages"] = tool_messages
     
     if should_end:
+        # 최종 결과 반환
+        final_assignments = {**state.get("assignments", {}), **update_payload.get("assignments", {})}
         return Command(
             goto=END,
             update={
-                "vision_results": {**state.get("vision_results", {}), **update_payload.get("vision_results", {})},
-                "classifications": {**state.get("classifications", {}), **update_payload.get("classifications", {})},
-                "categories": update_payload.get("categories", state.get("categories", [])),
+                "classifications": final_assignments,
+                "categories": list(state.get("current_folder_tree", {}).keys()),
+                "vision_results": state.get("refinement_results", {}),
             }
         )
     
+    if goto_refiner:
+        return Command(
+            goto="vision_refiner",
+            update={**update_payload, "current_phase": "refiner"}
+        )
+    
+    if goto_strategist:
+        return Command(
+            goto="strategist_agent",
+            update={**update_payload, "current_phase": "strategist"}
+        )
+    
     return Command(
-        goto="classification_supervisor",
+        goto="classifier_agent",
         update=update_payload,
     )
 
 
+async def vision_refiner(
+    state: ClassificationState, 
+    config: RunnableConfig
+) -> Command[Literal["classifier_agent"]]:
+    """Vision Refiner: VLM 정밀분석.
+    
+    Classifier가 요청한 이미지들을 고성능 VLM으로 분석합니다.
+    needs_visual_refinement=True이거나 Classifier가 모호하다고 판단한 이미지들.
+    """
+    configuration = Configuration.from_runnable_config(config)
+    
+    refinement_requests = state.get("refinement_requests", {})
+    image_paths = refinement_requests.get("image_paths", [])
+    questions = refinement_requests.get("questions", {})
+    
+    if not image_paths:
+        # 요청이 없으면 바로 Classifier로 복귀
+        return Command(
+            goto="classifier_agent",
+            update={"current_phase": "classifier"}
+        )
+    
+    # VLM 분석 실행
+    new_results = {}
+    
+    for img_path in image_paths:
+        try:
+            # 고성능 VLM으로 분석
+            result = await analyze_image(img_path, config)
+            new_results[img_path] = {
+                "analysis": result.model_dump(),
+                "answer": questions.get(img_path, ""),
+                "recommended_folder": result.suggested_category,
+            }
+        except Exception as e:
+            new_results[img_path] = {
+                "error": str(e),
+                "answer": "분석 실패",
+            }
+        
+        # Rate Limit 방지
+        await asyncio.sleep(1)
+    
+    # 기존 결과에 병합
+    current_results = state.get("refinement_results", {})
+    merged_results = {**current_results, **new_results}
+    
+    return Command(
+        goto="classifier_agent",
+        update={
+            "refinement_results": merged_results,
+            "refinement_requests": {},  # 요청 처리 완료
+            "current_phase": "classifier",
+        }
+    )
+
+
 def create_classification_subgraph():
-    """Classification Phase 서브그래프를 생성합니다."""
+    """Classification Phase 서브그래프를 생성합니다.
+    
+    새로운 Strategist-Classifier 아키텍처:
+    
+    START → strategist_agent ↔ strategist_tools
+                    ↓ (StrategyComplete)
+            classifier_agent ↔ classifier_tools
+                    ↓              ↓
+                   END    ←  vision_refiner
+                    ↑              
+            (ReportAmbiguity → strategist_agent로 피드백)
+    """
     builder = StateGraph(
         ClassificationState,
         output=ClassificationOutputState,
         config_schema=Configuration,
     )
     
-    builder.add_node("classification_supervisor", classification_supervisor)
-    builder.add_node("classification_tools", classification_tools)
-    builder.add_edge(START, "classification_supervisor")
+    # 노드 추가
+    builder.add_node("strategist_agent", strategist_agent)
+    builder.add_node("strategist_tools", strategist_tools)
+    builder.add_node("classifier_agent", classifier_agent)
+    builder.add_node("classifier_tools", classifier_tools)
+    builder.add_node("vision_refiner", vision_refiner)
+    
+    # 시작점: Strategist
+    builder.add_edge(START, "strategist_agent")
     
     return builder.compile()
 
