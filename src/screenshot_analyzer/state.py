@@ -1,13 +1,14 @@
 """스크린샷 분석기의 State 정의.
 
 그래프 구조:
-- 메인 그래프: initialize → ingestion → classification_phase → insight_phase → final_report
+- 메인 그래프: initialize → ingestion → classification_phase → END
 - Phase 0 (Ingestion): 경량 VLM으로 메타데이터 추출 (Workflow)
 - Phase 1 (Classification): Strategist-Classifier 자율 에이전트 루프
   - Strategist: 폴더 구조 설계 및 수정
   - Classifier: 이미지 분류 및 피드백
   - Vision Refiner: 선택적 VLM 정밀분석
-- Phase 2 (Insight): Agentic 서브그래프 (supervisor ↔ tools 반복)
+
+출력: classifications (분류 결과), categories (폴더 목록)
 """
 
 import operator
@@ -227,41 +228,6 @@ class ClassificationComplete(BaseModel):
 
 
 # ============================================================
-# Phase 2: Insight - Structured Outputs (도구)
-# ============================================================
-
-class ConductSearch(BaseModel):
-    """웹 검색 지시 (Supervisor → Worker).
-    
-    특정 카테고리에 대한 인사이트를 얻기 위해 웹 검색 수행.
-    """
-    
-    category: str = Field(
-        description="검색할 카테고리"
-    )
-    keywords: list[str] = Field(
-        description="검색에 사용할 키워드들"
-    )
-    reason: str = Field(
-        description="이 검색을 수행하는 이유"
-    )
-
-
-class InsightComplete(BaseModel):
-    """Insight Phase 완료 신호.
-    
-    모든 카테고리의 인사이트 수집이 완료되었을 때 호출.
-    """
-    
-    summary: str = Field(
-        description="인사이트 수집 결과 요약"
-    )
-    categories_covered: list[str] = Field(
-        description="인사이트를 수집한 카테고리 목록"
-    )
-
-
-# ============================================================
 # 메인 State (전체 워크플로우)
 # ============================================================
 
@@ -279,7 +245,7 @@ class ScreenshotAnalyzerState(TypedDict):
     """메인 그래프 State.
     
     전체 워크플로우에서 공유되는 상태.
-    Phase 0 → Phase 1 → Phase 2 → Report 순으로 데이터가 채워짐.
+    Phase 0 (Ingestion) → Phase 1 (Classification) → END
     """
     
     # 입력 데이터
@@ -293,14 +259,8 @@ class ScreenshotAnalyzerState(TypedDict):
     vision_results: Annotated[dict, override_reducer]  # {image_path: ImageAnalysisResult.dict()}
     
     # Phase 1 결과: 분류
-    classifications: Annotated[dict, override_reducer]  # {image_path: ImageClassification.dict()}
-    categories: list[str]  # 최종 카테고리 목록
-    
-    # Phase 2 결과: 인사이트
-    category_insights: Annotated[dict, override_reducer]  # {category: insight_dict}
-    
-    # 최종 결과
-    final_report: str
+    classifications: Annotated[dict, override_reducer]  # {image_path: folder_name}
+    categories: list[str]  # 최종 폴더/카테고리 목록
 
 
 # ============================================================
@@ -360,35 +320,3 @@ class ClassificationOutputState(TypedDict):
     vision_results: dict  # refinement_results
 
 
-# ============================================================
-# Phase 2: Insight State (서브그래프용)
-# ============================================================
-
-class InsightState(TypedDict):
-    """Insight Phase 서브그래프 State.
-    
-    Supervisor ↔ Tools 반복 구조에서 사용.
-    """
-    
-    # Supervisor 통신용 메시지
-    messages: Annotated[list[MessageLikeRepresentation], operator.add]
-    
-    # 입력 (메인 State에서 전달받음)
-    categories: list[str]  # 검색할 카테고리들
-    classifications: dict  # 분류 결과 (참고용)
-    
-    # 작업 진행 상태
-    searched_categories: list[str]  # 검색 완료된 카테고리들
-    iteration_count: int  # 반복 횟수
-    
-    # 결과 (메인 State로 반환)
-    category_insights: Annotated[dict, override_reducer]
-
-
-class InsightOutputState(TypedDict):
-    """Insight Phase 출력 State.
-    
-    서브그래프 완료 시 메인 그래프로 반환하는 데이터.
-    """
-    
-    category_insights: dict

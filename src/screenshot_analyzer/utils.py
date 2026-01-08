@@ -5,16 +5,14 @@ import base64
 import json
 import logging
 import os
-from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Optional
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
-from tavily import AsyncTavilyClient
 
-from screenshot_analyzer.configuration import Configuration, SearchAPI
+from screenshot_analyzer.configuration import Configuration
 from screenshot_analyzer.prompts import INGESTION_PROMPT, VISION_ANALYSIS_PROMPT
 from screenshot_analyzer.state import ImageAnalysisResult, ImageMetadata
 
@@ -313,140 +311,6 @@ def parse_json_response(content: str) -> dict:
 
 
 # ============================================================
-# Tavily 검색 유틸
-# ============================================================
-
-async def tavily_search_async(
-    queries: List[str],
-    max_results: int = 5,
-    topic: Literal["general", "news", "finance"] = "general",
-    include_raw_content: bool = False,
-    config: Optional[RunnableConfig] = None
-) -> List[dict]:
-    """Tavily API로 비동기 웹 검색 수행.
-    
-    Args:
-        queries: 검색 쿼리 리스트
-        max_results: 쿼리당 최대 결과 수
-        topic: 검색 토픽 필터
-        include_raw_content: 원본 콘텐츠 포함 여부
-        config: 런타임 설정
-        
-    Returns:
-        검색 결과 리스트
-    """
-    api_key = get_tavily_api_key(config)
-    if not api_key:
-        logger.warning("TAVILY_API_KEY가 설정되지 않았습니다")
-        return []
-    
-    client = AsyncTavilyClient(api_key=api_key)
-    
-    # 병렬로 검색 실행
-    search_tasks = [
-        client.search(
-            query,
-            max_results=max_results,
-            include_raw_content=include_raw_content,
-            topic=topic
-        )
-        for query in queries
-    ]
-    
-    try:
-        results = await asyncio.gather(*search_tasks, return_exceptions=True)
-        
-        # 예외 필터링
-        valid_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"검색 실패 ({queries[i]}): {result}")
-            else:
-                result["query"] = queries[i]
-                valid_results.append(result)
-        
-        return valid_results
-        
-    except Exception as e:
-        logger.error(f"Tavily 검색 실패: {e}")
-        return []
-
-
-async def search_category_insights(
-    category: str,
-    keywords: List[str],
-    config: Optional[RunnableConfig] = None
-) -> dict:
-    """카테고리별 인사이트를 위한 웹 검색.
-    
-    Args:
-        category: 검색할 카테고리
-        keywords: 추가 검색 키워드
-        config: 런타임 설정
-        
-    Returns:
-        인사이트 정보 dict
-    """
-    configuration = Configuration.from_runnable_config(config)
-    
-    # 검색 쿼리 생성
-    queries = [
-        f"{category} 트렌드 {get_today_str()}",
-        f"{category} {' '.join(keywords[:3])} 추천" if keywords else f"{category} 인기",
-    ]
-    
-    # 검색 실행
-    results = await tavily_search_async(
-        queries,
-        max_results=configuration.max_search_results,
-        config=config
-    )
-    
-    # 결과 정리
-    insights = {
-        "category": category,
-        "search_queries": queries,
-        "sources": [],
-        "summary_points": []
-    }
-    
-    for result in results:
-        for item in result.get("results", []):
-            insights["sources"].append({
-                "title": item.get("title", ""),
-                "url": item.get("url", ""),
-                "content": item.get("content", "")[:500]  # 내용 제한
-            })
-    
-    return insights
-
-
-def format_search_results(results: List[dict]) -> str:
-    """검색 결과를 포맷팅된 문자열로 변환.
-    
-    Args:
-        results: Tavily 검색 결과 리스트
-        
-    Returns:
-        포맷팅된 결과 문자열
-    """
-    if not results:
-        return "검색 결과가 없습니다."
-    
-    formatted = "검색 결과:\n\n"
-    source_num = 1
-    
-    for result in results:
-        for item in result.get("results", []):
-            formatted += f"--- 출처 {source_num}: {item.get('title', '제목 없음')} ---\n"
-            formatted += f"URL: {item.get('url', '')}\n"
-            formatted += f"내용: {item.get('content', '')}\n\n"
-            source_num += 1
-    
-    return formatted
-
-
-# ============================================================
 # 모델 및 API 키 관련 유틸
 # ============================================================
 
@@ -484,38 +348,9 @@ def get_api_key_for_model(model_name: str, config: Optional[RunnableConfig] = No
     return None
 
 
-def get_tavily_api_key(config: Optional[RunnableConfig] = None) -> Optional[str]:
-    """Tavily API 키 반환.
-    
-    Args:
-        config: 런타임 설정
-        
-    Returns:
-        API 키 문자열 또는 None
-    """
-    # config에서 먼저 확인
-    if config:
-        api_keys = config.get("configurable", {}).get("apiKeys", {})
-        if api_keys and api_keys.get("TAVILY_API_KEY"):
-            return api_keys.get("TAVILY_API_KEY")
-    
-    # 환경변수에서 확인
-    return os.getenv("TAVILY_API_KEY")
-
-
 # ============================================================
 # 기타 유틸
 # ============================================================
-
-def get_today_str() -> str:
-    """오늘 날짜를 문자열로 반환.
-    
-    Returns:
-        "2024년 1월 15일" 형식의 날짜 문자열
-    """
-    now = datetime.now()
-    return f"{now.year}년 {now.month}월 {now.day}일"
-
 
 def get_config_value(value: Any) -> Any:
     """설정 값에서 실제 값 추출.
@@ -540,17 +375,3 @@ def get_config_value(value: Any) -> Any:
     return value
 
 
-async def get_search_tool(search_api: SearchAPI) -> List[Any]:
-    """검색 API에 따른 검색 도구 반환.
-    
-    Args:
-        search_api: 사용할 검색 API
-        
-    Returns:
-        검색 도구 리스트
-    """
-    if search_api == SearchAPI.TAVILY:
-        return ["tavily_search"]
-    elif search_api == SearchAPI.NONE:
-        return []
-    return []

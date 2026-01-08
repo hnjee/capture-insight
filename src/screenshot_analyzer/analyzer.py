@@ -1,14 +1,15 @@
 """스크린샷 분석기 메인 그래프 구현.
 
 그래프 구조:
-    START → initialize → ingestion → classification_phase → insight_phase → final_report → END
+    START → initialize → ingestion → classification_phase → END
 
 Phase 0 (Ingestion): 경량 VLM으로 모든 이미지 메타데이터 추출 (Workflow)
 Phase 1 (Classification): Strategist-Classifier 자율 에이전트 루프
     - Strategist: 메타데이터 기반 폴더 구조 설계
     - Classifier: 이미지 분류 + 피드백 루프
     - Vision Refiner: 필요 시 VLM 정밀분석
-Phase 2 (Insight): 카테고리별 웹 검색 인사이트 수집
+
+출력: classifications (분류 결과), categories (폴더 목록)
 """
 
 import asyncio
@@ -25,25 +26,16 @@ from screenshot_analyzer.configuration import Configuration
 from screenshot_analyzer.prompts import (
     CLASSIFIER_HUMAN_PROMPT,
     CLASSIFIER_SYSTEM_PROMPT,
-    FINAL_REPORT_PROMPT,
-    INSIGHT_HUMAN_PROMPT,
-    INSIGHT_SUPERVISOR_SYSTEM_PROMPT,
-    SEARCH_INSIGHT_PROMPT,
     STRATEGIST_HUMAN_PROMPT,
     STRATEGIST_SYSTEM_PROMPT,
-    VISION_REFINER_PROMPT,
 )
 from screenshot_analyzer.state import (
     ClassificationComplete,
     ClassificationOutputState,
     ClassificationState,
     ClassifyImages,
-    ConductSearch,
     DesignFolderStructure,
     InputState,
-    InsightComplete,
-    InsightOutputState,
-    InsightState,
     ReportAmbiguity,
     RequestRefinement,
     ReviseStructure,
@@ -55,7 +47,6 @@ from screenshot_analyzer.utils import (
     batch_ingestion,
     get_api_key_for_model,
     parse_json_response,
-    search_category_insights,
 )
 
 # ============================================================
@@ -85,10 +76,6 @@ async def initialize(state: InputState, config: RunnableConfig) -> dict:
         "vision_results": {},
         "classifications": {},
         "categories": existing_categories or [],
-        # Phase 2: Insight
-        "category_insights": {},
-        # Final
-        "final_report": "",
     }
 
 
@@ -123,54 +110,6 @@ async def run_ingestion(state: ScreenshotAnalyzerState, config: RunnableConfig) 
     
     return {
         "image_metadatas": serialized_metadatas
-    }
-
-
-async def generate_final_report(state: ScreenshotAnalyzerState, config: RunnableConfig) -> dict:
-    """최종 보고서 생성 노드.
-    
-    분류 결과와 인사이트를 종합하여 마크다운 형식의 보고서를 생성합니다.
-    """
-    configuration = Configuration.from_runnable_config(config)
-    
-    # 상태에서 데이터 추출
-    images = state.get("images", [])
-    classifications = state.get("classifications", {})
-    category_insights = state.get("category_insights", {})
-    
-    # 분석 일시
-    from datetime import datetime
-    analysis_date = datetime.now().strftime("%Y년 %m월 %d일 %H:%M")
-    
-    # 분류 결과 정리
-    classifications_str = json.dumps(classifications, ensure_ascii=False, indent=2)
-    
-    # 인사이트 정리
-    insights_str = json.dumps(category_insights, ensure_ascii=False, indent=2)
-    
-    # 프롬프트 구성
-    report_prompt = FINAL_REPORT_PROMPT.format(
-        total_images=len(images),
-        analysis_date=analysis_date,
-        classifications=classifications_str,
-        category_insights=insights_str,
-    )
-    
-    # 모델 설정
-    model_config = {
-        "model": configuration.report_model,
-        "max_tokens": configuration.report_max_tokens,
-        "api_key": get_api_key_for_model(configuration.report_model, config),
-    }
-    report_model = configurable_model.with_config(model_config)
-    
-    # LLM 호출
-    response = await report_model.ainvoke([
-        HumanMessage(content=report_prompt)
-    ])
-    
-    return {
-        "final_report": response.content
     }
 
 
@@ -688,239 +627,6 @@ classification_subgraph = create_classification_subgraph()
 
 
 # ============================================================
-# Phase 2: Insight 서브그래프
-# ============================================================
-
-async def insight_supervisor(
-    state: InsightState, 
-    config: RunnableConfig
-) -> Command[Literal["insight_tools"]]:
-    """Insight Phase의 Supervisor 노드.
-    
-    현재 상태를 분석하고 다음 작업을 결정합니다:
-    - ConductSearch: 웹 검색 지시
-    - InsightComplete: Phase 완료
-    """
-    configuration = Configuration.from_runnable_config(config)
-    
-    # 현재 상태 추출
-    categories = state.get("categories", [])
-    searched_categories = state.get("searched_categories", [])
-    category_insights = state.get("category_insights", {})
-    classifications = state.get("classifications", {})
-    iteration_count = state.get("iteration_count", 0)
-    
-    # 미검색 카테고리 계산
-    pending_categories = [cat for cat in categories if cat not in searched_categories]
-    
-    # 카테고리별 이미지 수 계산
-    category_image_counts = {}
-    for img_path, classification in classifications.items():
-        cat = classification.get("category", "기타") if isinstance(classification, dict) else "기타"
-        category_image_counts[cat] = category_image_counts.get(cat, 0) + 1
-    
-    # 시스템 프롬프트 구성
-    system_prompt = INSIGHT_SUPERVISOR_SYSTEM_PROMPT.format(
-        total_categories=len(categories),
-        searched_count=len(searched_categories),
-        pending_count=len(pending_categories),
-        iteration_count=iteration_count,
-        max_iterations=configuration.max_analysis_iterations,
-        categories_list=", ".join(categories) if categories else "없음",
-        insights_summary=json.dumps(category_insights, ensure_ascii=False, indent=2) if category_insights else "없음",
-    )
-    
-    # Human 프롬프트 구성
-    human_prompt = INSIGHT_HUMAN_PROMPT.format(
-        pending_categories=", ".join(pending_categories) if pending_categories else "없음 (모두 검색 완료)",
-        category_image_counts=json.dumps(category_image_counts, ensure_ascii=False, indent=2),
-    )
-    
-    # 모델 설정
-    model_config = {
-        "model": configuration.analysis_model,
-        "max_tokens": configuration.max_tokens,
-        "api_key": get_api_key_for_model(configuration.analysis_model, config),
-    }
-    
-    # 도구 바인딩
-    tools = [ConductSearch, InsightComplete]
-    model_with_tools = configurable_model.bind_tools(tools).with_config(model_config)
-    
-    # 메시지 구성
-    messages = state.get("messages", [])
-    if not messages:
-        messages = [SystemMessage(content=system_prompt)]
-    messages.append(HumanMessage(content=human_prompt))
-    
-    # LLM 호출
-    response = await model_with_tools.ainvoke(messages)
-    
-    return Command(
-        goto="insight_tools",
-        update={
-            "messages": [response],
-            "iteration_count": iteration_count + 1,
-        }
-    )
-
-
-async def insight_tools(
-    state: InsightState, 
-    config: RunnableConfig
-) -> Command[Literal["insight_supervisor", "__end__"]]:
-    """Insight Phase의 도구 실행 노드.
-    
-    Supervisor가 호출한 도구를 실행합니다:
-    - ConductSearch: Tavily로 웹 검색
-    - InsightComplete: Phase 종료
-    """
-    configuration = Configuration.from_runnable_config(config)
-    messages = state.get("messages", [])
-    most_recent_message = messages[-1] if messages else None
-    
-    # 도구 호출이 없으면 종료
-    if not most_recent_message or not most_recent_message.tool_calls:
-        return Command(
-            goto=END,
-            update={
-                "category_insights": state.get("category_insights", {}),
-            }
-        )
-    
-    # 반복 횟수 체크
-    iteration_count = state.get("iteration_count", 0)
-    if iteration_count > configuration.max_analysis_iterations:
-        return Command(
-            goto=END,
-            update={
-                "category_insights": state.get("category_insights", {}),
-            }
-        )
-    
-    tool_messages = []
-    update_payload = {}
-    should_end = False
-    
-    for tool_call in most_recent_message.tool_calls:
-        tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
-        
-        if tool_name == "ConductSearch":
-            # 웹 검색 수행
-            category = tool_args.get("category", "")
-            keywords = tool_args.get("keywords", [])
-            
-            if category:
-                # 검색 수행
-                search_result = await search_category_insights(
-                    category=category,
-                    keywords=keywords,
-                    config=config,
-                )
-                
-                # 검색 결과로 인사이트 생성
-                classifications = state.get("classifications", {})
-                category_images = [
-                    img for img, cls in classifications.items()
-                    if (cls.get("category") if isinstance(cls, dict) else "") == category
-                ]
-                
-                # 인사이트 정리 (LLM 호출)
-                if search_result.get("sources"):
-                    insight_prompt = SEARCH_INSIGHT_PROMPT.format(
-                        category=category,
-                        image_count=len(category_images),
-                        sub_categories=", ".join(set(
-                            cls.get("sub_category", "") 
-                            for cls in classifications.values() 
-                            if isinstance(cls, dict) and cls.get("category") == category
-                        )),
-                        search_results=json.dumps(search_result.get("sources", []), ensure_ascii=False, indent=2),
-                    )
-                    
-                    model_config = {
-                        "model": configuration.analysis_model,
-                        "max_tokens": configuration.max_tokens,
-                        "api_key": get_api_key_for_model(configuration.analysis_model, config),
-                    }
-                    insight_model = configurable_model.with_config(model_config)
-                    
-                    response = await insight_model.ainvoke([
-                        HumanMessage(content=insight_prompt)
-                    ])
-                    
-                    insight_dict = parse_json_response(response.content)
-                    
-                    # State 업데이트
-                    new_insights = {category: insight_dict}
-                    update_payload["category_insights"] = new_insights
-                    update_payload["searched_categories"] = state.get("searched_categories", []) + [category]
-                    
-                    tool_messages.append(ToolMessage(
-                        content=f"'{category}' 카테고리 인사이트 수집 완료\n{json.dumps(insight_dict, ensure_ascii=False, indent=2)}",
-                        name=tool_name,
-                        tool_call_id=tool_call["id"],
-                    ))
-                else:
-                    tool_messages.append(ToolMessage(
-                        content=f"'{category}' 카테고리 검색 결과가 없습니다.",
-                        name=tool_name,
-                        tool_call_id=tool_call["id"],
-                    ))
-            else:
-                tool_messages.append(ToolMessage(
-                    content="검색할 카테고리가 지정되지 않았습니다.",
-                    name=tool_name,
-                    tool_call_id=tool_call["id"],
-                ))
-        
-        elif tool_name == "InsightComplete":
-            # Phase 완료
-            should_end = True
-            summary = tool_args.get("summary", "인사이트 수집 완료")
-            
-            tool_messages.append(ToolMessage(
-                content=f"Insight Phase 완료: {summary}",
-                name=tool_name,
-                tool_call_id=tool_call["id"],
-            ))
-    
-    update_payload["messages"] = tool_messages
-    
-    if should_end:
-        return Command(
-            goto=END,
-            update={
-                "category_insights": {**state.get("category_insights", {}), **update_payload.get("category_insights", {})},
-            }
-        )
-    
-    return Command(
-        goto="insight_supervisor",
-        update=update_payload,
-    )
-
-
-def create_insight_subgraph():
-    """Insight Phase 서브그래프를 생성합니다."""
-    builder = StateGraph(
-        InsightState,
-        output=InsightOutputState,
-        config_schema=Configuration,
-    )
-    
-    builder.add_node("insight_supervisor", insight_supervisor)
-    builder.add_node("insight_tools", insight_tools)
-    builder.add_edge(START, "insight_supervisor")
-    
-    return builder.compile()
-
-
-insight_subgraph = create_insight_subgraph()
-
-
-# ============================================================
 # 메인 그래프 구성
 # ============================================================
 
@@ -928,12 +634,20 @@ def create_graph():
     """메인 그래프를 생성합니다.
     
     그래프 구조:
-        START → initialize → ingestion → classification_phase → insight_phase → final_report → END
+        START → initialize → ingestion → classification_phase → END
     
     Phase 0 (Ingestion):
         - 모든 이미지를 경량 VLM으로 메타데이터 추출
         - 비용 60~80% 절감
-        - 이후 단계는 텍스트만으로 추론 가능
+    
+    Phase 1 (Classification):
+        - Strategist: 폴더 구조 설계
+        - Classifier: 이미지 분류 + 피드백 루프
+        - Vision Refiner: 필요 시 VLM 정밀분석
+    
+    출력:
+        - classifications: {image_path: folder_name}
+        - categories: 최종 폴더 목록
     """
     builder = StateGraph(
         ScreenshotAnalyzerState,
@@ -943,18 +657,14 @@ def create_graph():
     
     # 노드 추가
     builder.add_node("initialize", initialize)
-    builder.add_node("ingestion", run_ingestion)  # Phase 0: 신규 추가!
+    builder.add_node("ingestion", run_ingestion)
     builder.add_node("classification_phase", classification_subgraph)
-    builder.add_node("insight_phase", insight_subgraph)
-    builder.add_node("final_report", generate_final_report)
     
     # 엣지 연결
     builder.add_edge(START, "initialize")
-    builder.add_edge("initialize", "ingestion")  # 신규: initialize → ingestion
-    builder.add_edge("ingestion", "classification_phase")  # 신규: ingestion → classification
-    builder.add_edge("classification_phase", "insight_phase")
-    builder.add_edge("insight_phase", "final_report")
-    builder.add_edge("final_report", END)
+    builder.add_edge("initialize", "ingestion")
+    builder.add_edge("ingestion", "classification_phase")
+    builder.add_edge("classification_phase", END)
     
     return builder.compile()
 

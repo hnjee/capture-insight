@@ -1,18 +1,10 @@
 """스크린샷 분석기 시스템의 설정 관리 모듈."""
 
 import os
-from enum import Enum
 from typing import Any, Optional
 
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
-
-
-class SearchAPI(Enum):
-    """사용 가능한 검색 API 목록."""
-    
-    TAVILY = "tavily"
-    NONE = "none"
 
 
 class Configuration(BaseModel):
@@ -73,17 +65,7 @@ class Configuration(BaseModel):
             "x_oap_ui_config": {
                 "type": "text",
                 "default": "gpt-4o",
-                "description": "분석 및 추론용 모델"
-            }
-        }
-    )
-    report_model: str = Field(
-        default="gpt-4o",
-        metadata={
-            "x_oap_ui_config": {
-                "type": "text",
-                "default": "gpt-4o",
-                "description": "최종 보고서 생성용 모델"
+                "description": "분석 및 추론용 모델 (Strategist, Classifier)"
             }
         }
     )
@@ -96,46 +78,6 @@ class Configuration(BaseModel):
                 "min": 1000,
                 "max": 32000,
                 "description": "일반 응답의 최대 출력 토큰 수"
-            }
-        }
-    )
-    report_max_tokens: int = Field(
-        default=10000,
-        metadata={
-            "x_oap_ui_config": {
-                "type": "number",
-                "default": 10000,
-                "min": 1000,
-                "max": 50000,
-                "description": "보고서 생성의 최대 출력 토큰 수"
-            }
-        }
-    )
-    # 검색 설정
-    search_api: SearchAPI = Field(
-        default=SearchAPI.TAVILY,
-        metadata={
-            "x_oap_ui_config": {
-                "type": "select",
-                "default": "tavily",
-                "description": "웹 검색에 사용할 API",
-                "options": [
-                    {"label": "Tavily", "value": SearchAPI.TAVILY.value},
-                    {"label": "None", "value": SearchAPI.NONE.value}
-                ]
-            }
-        }
-    )
-    max_search_results: int = Field(
-        default=5,
-        metadata={
-            "x_oap_ui_config": {
-                "type": "slider",
-                "default": 5,
-                "min": 1,
-                "max": 20,
-                "step": 1,
-                "description": "가져올 검색 결과의 최대 개수"
             }
         }
     )
@@ -169,11 +111,11 @@ class Configuration(BaseModel):
                 values[field_name] = configurable[field_name]
             elif os.environ.get(field_name.upper()):
                 env_value = os.environ.get(field_name.upper())
-                if field_name == "search_api" and env_value:
-                    values[field_name] = SearchAPI(env_value)
-                elif field_name in ["max_tokens", "report_max_tokens", 
-                                   "max_search_results", "max_analysis_iterations"]:
+                if field_name in ["max_tokens", "max_analysis_iterations", 
+                                   "ingestion_concurrency"]:
                     values[field_name] = int(env_value)  # type: ignore
+                elif field_name == "refinement_threshold":
+                    values[field_name] = float(env_value)  # type: ignore
                 else:
                     values[field_name] = env_value
         
