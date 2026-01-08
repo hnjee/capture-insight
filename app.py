@@ -309,7 +309,7 @@ def main():
     for i, img_path in enumerate(images[:24]):  # 최대 24개 미리보기
         with cols[i % 8]:
             try:
-                st.image(img_path, use_container_width=True)
+                st.image(img_path, width='stretch')
             except Exception:
                 st.markdown("🖼️")
     
@@ -327,7 +327,7 @@ def main():
         analyze_button = st.button(
             "🚀 분석 시작" if not st.session_state.is_analyzing else "⏳ 분석 중...",
             disabled=st.session_state.is_analyzing,
-            use_container_width=True,
+            width='stretch',
         )
     
     # ============================================================
@@ -519,7 +519,7 @@ def main():
         st.markdown("---")
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            if st.button("🔄 다시 분석하기", use_container_width=True):
+            if st.button("🔄 다시 분석하기", width='stretch'):
                 st.session_state.analysis_result = None
                 st.session_state.trace_id = None
                 st.rerun()
