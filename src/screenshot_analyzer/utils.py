@@ -14,7 +14,7 @@ from langchain_core.runnables import RunnableConfig
 
 from screenshot_analyzer.configuration import Configuration
 from screenshot_analyzer.prompts import INGESTION_PROMPT, VISION_ANALYSIS_PROMPT
-from screenshot_analyzer.state import ImageAnalysisResult, ImageMetadata
+from screenshot_analyzer.state import IngestionMetadata, RefinementResult
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 async def ingest_image(
     image_path: str,
     config: Optional[RunnableConfig] = None
-) -> ImageMetadata:
+) -> IngestionMetadata:
     """경량 VLM으로 단일 이미지의 메타데이터 추출.
     
     비용 효율적인 경량 모델(gpt-4o-mini 등)을 사용하여
@@ -38,7 +38,7 @@ async def ingest_image(
         config: LangGraph 런타임 설정
         
     Returns:
-        ImageMetadata 객체
+        IngestionMetadata 객체
     """
     configuration = Configuration.from_runnable_config(config)
     
@@ -47,7 +47,7 @@ async def ingest_image(
         image_base64 = load_image_as_base64(image_path)
         media_type = get_image_media_type(image_path)
     except FileNotFoundError as e:
-        return ImageMetadata(
+        return IngestionMetadata(
             image_path=image_path,
             description="파일을 찾을 수 없음",
             ocr_text="",
@@ -67,7 +67,7 @@ async def ingest_image(
     
     # 프롬프트 구성 (refinement_threshold 주입)
     prompt = INGESTION_PROMPT.format(
-        refinement_threshold=configuration.refinement_threshold
+        refinement_threshold=analyze_image.refinement_threshold
     )
     
     # Vision API 호출
@@ -91,7 +91,7 @@ async def ingest_image(
         
         confidence = result_dict.get("confidence_score", 0.5)
         
-        return ImageMetadata(
+        return IngestionMetadata(
             image_path=image_path,
             description=result_dict.get("description", ""),
             ocr_text=result_dict.get("ocr_text", ""),
@@ -106,7 +106,7 @@ async def ingest_image(
         
     except Exception as e:
         logger.error(f"Ingestion 실패 ({image_path}): {e}")
-        return ImageMetadata(
+        return IngestionMetadata(
             image_path=image_path,
             description="분석 실패",
             ocr_text="",
@@ -120,7 +120,7 @@ async def ingest_image(
 async def batch_ingestion(
     images: List[str],
     config: Optional[RunnableConfig] = None
-) -> dict[str, ImageMetadata]:
+) -> dict[str, IngestionMetadata]:
     """모든 이미지를 일괄 Ingestion하여 메타데이터 추출.
     
     동시성을 제한하여 Rate Limit을 방지하면서 병렬 처리합니다.
@@ -130,14 +130,14 @@ async def batch_ingestion(
         config: LangGraph 런타임 설정
         
     Returns:
-        {image_path: ImageMetadata} 딕셔너리
+        {image_path: IngestionMetadata} 딕셔너리
     """
     configuration = Configuration.from_runnable_config(config)
     
     # 동시 처리 수 제한 (Rate Limit 방지)
     semaphore = asyncio.Semaphore(configuration.ingestion_concurrency)
     
-    async def process_with_semaphore(img_path: str) -> tuple[str, ImageMetadata]:
+    async def process_with_semaphore(img_path: str) -> tuple[str, IngestionMetadata]:
         async with semaphore:
             # Rate Limit 방지를 위한 약간의 딜레이
             await asyncio.sleep(0.2)
@@ -149,7 +149,7 @@ async def batch_ingestion(
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # 결과 정리
-    metadata_dict: dict[str, ImageMetadata] = {}
+    metadata_dict: dict[str, IngestionMetadata] = {}
     for result in results:
         if isinstance(result, Exception):
             logger.error(f"Batch ingestion 에러: {result}")
@@ -219,17 +219,18 @@ def get_image_media_type(image_path: str) -> str:
 async def analyze_image(
     image_path: str,
     config: Optional[RunnableConfig] = None
-) -> ImageAnalysisResult:
-    """Vision API로 이미지 분석 + OCR 수행.
+) -> RefinementResult:
+    """Vision Refiner: 고성능 VLM으로 이미지 정밀 분석.
     
-    이미지를 분석하여 객체, 장면, 텍스트, 카테고리 등을 추출합니다.
+    needs_visual_refinement=True인 이미지에 대해 상세 분석을 수행합니다.
+    객체, 장면, 텍스트, 카테고리 등을 추출합니다.
     
     Args:
         image_path: 분석할 이미지 경로
         config: LangGraph 런타임 설정
         
     Returns:
-        ImageAnalysisResult 객체
+        RefinementResult 객체
     """
     configuration = Configuration.from_runnable_config(config)
     
@@ -264,7 +265,7 @@ async def analyze_image(
         # JSON 응답 파싱
         result_dict = parse_json_response(response.content)
         
-        return ImageAnalysisResult(
+        return RefinementResult(
             image_path=image_path,
             objects=result_dict.get("objects", []),
             scene=result_dict.get("scene", ""),
@@ -276,7 +277,7 @@ async def analyze_image(
     except Exception as e:
         logger.error(f"이미지 분석 실패 ({image_path}): {e}")
         # 실패 시 기본값 반환
-        return ImageAnalysisResult(
+        return RefinementResult(
             image_path=image_path,
             objects=[],
             scene="분석 실패",
@@ -346,32 +347,5 @@ def get_api_key_for_model(model_name: str, config: Optional[RunnableConfig] = No
         return os.getenv("GOOGLE_API_KEY")
     
     return None
-
-
-# ============================================================
-# 기타 유틸
-# ============================================================
-
-def get_config_value(value: Any) -> Any:
-    """설정 값에서 실제 값 추출.
-    
-    Enum이나 None을 적절히 처리합니다.
-    
-    Args:
-        value: 설정 값
-        
-    Returns:
-        추출된 값
-    """
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        return value
-    # Enum인 경우 value 속성 반환
-    if hasattr(value, "value"):
-        return value.value
-    return value
 
 

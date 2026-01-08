@@ -46,7 +46,6 @@ from screenshot_analyzer.utils import (
     analyze_image,
     batch_ingestion,
     get_api_key_for_model,
-    parse_json_response,
 )
 
 # ============================================================
@@ -102,7 +101,7 @@ async def run_ingestion(state: ScreenshotAnalyzerState, config: RunnableConfig) 
     # 배치 Ingestion 실행
     metadata_dict = await batch_ingestion(images, config)
     
-    # ImageMetadata를 dict로 변환하여 State에 저장
+    # IngestionMetadata를 dict로 변환하여 State에 저장
     serialized_metadatas = {
         path: metadata.model_dump()
         for path, metadata in metadata_dict.items()

@@ -19,14 +19,13 @@ from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
-
 # ============================================================
-# Phase 0: Ingestion - 메타데이터 모델
+# Data Schemas (에이전트 사고의 재료)
 # ============================================================
 
-class ImageMetadata(BaseModel):
-    """경량 VLM으로 추출한 이미지 메타데이터.
-    
+class IngestionMetadata(BaseModel):
+    """경량 VLM으로 1차 추출한 이미지 메타데이터.
+
     Ingestion 단계에서 모든 이미지를 저비용으로 텍스트화하여
     이후 단계에서 이미지 없이도 분류가 가능하도록 함.
     """
@@ -53,30 +52,12 @@ class ImageMetadata(BaseModel):
     )
 
 
-# ============================================================
-# Reducer 함수
-# ============================================================
-
-def override_reducer(current_value, new_value):
-    """기존 값을 새 값으로 덮어쓰기하는 reducer.
+class RefinementResult(BaseModel):
+    """Vision Refiner에서 고성능 VLM으로 정밀 분석한 결과.
     
-    - {"type": "override", "value": ...} 형태면 완전 교체
-    - 둘 다 dict면 병합
-    - 그 외엔 새 값으로 교체
+    needs_visual_refinement=True인 이미지에 대해서만
+    선택적으로 생성되는 상세 분석 결과.
     """
-    if isinstance(new_value, dict) and new_value.get("type") == "override":
-        return new_value.get("value", new_value)
-    if isinstance(current_value, dict) and isinstance(new_value, dict):
-        return {**current_value, **new_value}
-    return new_value if new_value is not None else current_value
-
-
-# ============================================================
-# 데이터 모델 (분석 결과 구조)
-# ============================================================
-
-class ImageAnalysisResult(BaseModel):
-    """Vision API 이미지 분석 결과."""
     
     image_path: str = Field(description="분석한 이미지 경로")
     objects: list[str] = Field(description="발견된 주요 객체들")
@@ -86,18 +67,11 @@ class ImageAnalysisResult(BaseModel):
     confidence: float = Field(description="신뢰도 (0.0~1.0)", ge=0.0, le=1.0)
 
 
-class ImageClassification(BaseModel):
-    """이미지 분류 결과."""
-    
-    category: str = Field(description="메인 카테고리")
-    sub_category: str = Field(description="세부 카테고리")
-    confidence: float = Field(description="신뢰도", ge=0.0, le=1.0)
-    reasoning: str = Field(description="분류 근거")
-
-
 # ============================================================
-# Phase 1: Strategist - Structured Outputs (도구)
+# Structured Outputs (Agent의 도구)
 # ============================================================
+
+# --- Strategist 도구 ---
 
 class DesignFolderStructure(BaseModel):
     """폴더 구조 설계 도구.
@@ -149,9 +123,7 @@ class StrategyComplete(BaseModel):
     )
 
 
-# ============================================================
-# Phase 1: Classifier - Structured Outputs (도구)
-# ============================================================
+# --- Classifier 도구 ---
 
 class ClassifyImages(BaseModel):
     """이미지 분류 도구.
@@ -228,8 +200,24 @@ class ClassificationComplete(BaseModel):
 
 
 # ============================================================
-# 메인 State (전체 워크플로우)
+# State Definitions
 # ============================================================
+
+def override_reducer(current_value, new_value):
+    """기존 값을 새 값으로 덮어쓰기하는 reducer.
+    
+    - {"type": "override", "value": ...} 형태면 완전 교체
+    - 둘 다 dict면 병합
+    - 그 외엔 새 값으로 교체
+    """
+    if isinstance(new_value, dict) and new_value.get("type") == "override":
+        return new_value.get("value", new_value)
+    if isinstance(current_value, dict) and isinstance(new_value, dict):
+        return {**current_value, **new_value}
+    return new_value if new_value is not None else current_value
+
+
+# --- 메인 그래프 State ---
 
 class InputState(TypedDict):
     """외부 입력 State.
@@ -253,19 +241,15 @@ class ScreenshotAnalyzerState(TypedDict):
     existing_categories: Optional[list[str]]
     
     # Phase 0 결과: Ingestion (경량 VLM 메타데이터)
-    image_metadatas: Annotated[dict, override_reducer]  # {image_path: ImageMetadata.dict()}
+    image_metadatas: Annotated[dict, override_reducer]  # {image_path: IngestionMetadata.dict()}
     
-    # Phase 1 결과: Vision 분석 (Refiner용, 필요한 경우만)
-    vision_results: Annotated[dict, override_reducer]  # {image_path: ImageAnalysisResult.dict()}
+    # Phase 1 결과: Vision Refiner (정밀 분석, 필요한 경우만)
+    vision_results: Annotated[dict, override_reducer]  # {image_path: RefinementResult.dict()}
     
     # Phase 1 결과: 분류
     classifications: Annotated[dict, override_reducer]  # {image_path: folder_name}
     categories: list[str]  # 최종 폴더/카테고리 목록
 
-
-# ============================================================
-# Phase 1: Classification State (통합 - Strategist + Classifier)
-# ============================================================
 
 class ClassificationState(TypedDict):
     """Classification Phase 통합 State.
@@ -281,9 +265,9 @@ class ClassificationState(TypedDict):
     # === Agent 통신용 메시지 ===
     messages: Annotated[list[MessageLikeRepresentation], operator.add]
     
-    # === Workflow 데이터 (Ingestion에서 전달받음) ===
+    # === Ingestion 데이터 ===
     images: list[str]
-    image_metadatas: dict  # {image_path: ImageMetadata.dict()}
+    image_metadatas: dict  # {image_path: IngestionMetadata.dict()}
     existing_categories: Optional[list[str]]
     
     # === Strategist 관리 데이터 ===
@@ -318,5 +302,3 @@ class ClassificationOutputState(TypedDict):
     classifications: dict  # assignments를 변환하여 반환
     categories: list[str]  # folder_tree의 키들
     vision_results: dict  # refinement_results
-
-
