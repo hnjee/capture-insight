@@ -116,7 +116,7 @@ class StrategyComplete(BaseModel):
     """
     
     final_folders: List[str] = Field(
-        description="최종 확정된 폴더 리스트. 3-7개 정도의 1단계 폴더명"
+        description="최종 확정된 폴더 리스트. 1단계 폴더명"
     )
     summary: str = Field(
         description="설계 요약"
