@@ -65,21 +65,26 @@ async def ingest_image(
             ingestion_error=str(e)
         )
     
-    # 경량 Vision 모델 설정 (전역 인스턴스 재사용)
+    # 경량 Vision 모델 설정 (with_retry로 자동 재시도)
     api_key = get_api_key_for_model(configuration.ingestion_model, config)
     model_config = {
         "model": configuration.ingestion_model,
         "max_tokens": 1024,  # 메타데이터 추출이므로 작은 토큰으로 충분
         "api_key": api_key,
     }
-    model = configurable_model.with_config(model_config)
+    # ✅ with_retry() 추가: rate limit 자동 처리
+    model = (
+        configurable_model
+        .with_config(model_config)
+        .with_retry(stop_after_attempt=configuration.max_structured_output_retries)
+    )
     
     # 프롬프트 구성 (refinement_threshold 주입)
     prompt = INGESTION_PROMPT.format(
         refinement_threshold=configuration.refinement_threshold
     )
     
-    # Vision API 호출
+    # Vision API 호출 (rate limit은 with_retry가 자동 처리)
     message = HumanMessage(
         content=[
             {"type": "text", "text": prompt},
@@ -114,6 +119,7 @@ async def ingest_image(
         )
         
     except Exception as e:
+        # with_retry가 모든 재시도를 시도했지만 실패한 경우
         logger.error(f"Ingestion 실패 ({image_path}): {e}")
         return IngestionMetadata(
             image_path=image_path,
@@ -126,13 +132,46 @@ async def ingest_image(
         )
 
 
+async def execute_ingestion_safely(
+    img_path: str, 
+    config: Optional[RunnableConfig] = None
+) -> tuple[str, IngestionMetadata]:
+    """안전하게 Ingestion을 실행 (에러 발생 시에도 계속 진행).
+    
+    open_deep_research의 execute_tool_safely 패턴을 따름.
+    에러 발생 시 기본값을 반환하여 프로세스가 중단되지 않도록 함.
+    
+    Args:
+        img_path: 이미지 경로
+        config: LangGraph 런타임 설정
+        
+    Returns:
+        (image_path, IngestionMetadata) 튜플
+    """
+    try:
+        metadata = await ingest_image(img_path, config)
+        return (img_path, metadata)
+    except Exception as e:
+        logger.warning(f"Ingestion 에러 ({img_path}): {e}")
+        # 에러 발생 시 기본값 반환 (프로세스 중단 없음)
+        return (img_path, IngestionMetadata(
+            image_path=img_path,
+            description="분석 실패",
+            ocr_text="",
+            confidence_score=0.0,
+            needs_visual_refinement=True,
+            suggested_categories=[],
+            ingestion_error=str(e)
+        ))
+
+
 async def batch_ingestion(
     images: List[str],
     config: Optional[RunnableConfig] = None
 ) -> dict[str, IngestionMetadata]:
     """모든 이미지를 일괄 Ingestion하여 메타데이터 추출.
     
-    동시성을 제한하여 Rate Limit을 방지하면서 병렬 처리합니다.
+    open_deep_research 방식: 동시성 제한 + with_retry 자동 재시도
     
     Args:
         images: 이미지 경로 리스트
@@ -143,25 +182,26 @@ async def batch_ingestion(
     """
     configuration = Configuration.from_runnable_config(config)
     
-    # 동시 처리 수 제한 (Rate Limit 방지)
+    # 동시 처리 수 제한 (Rate Limit 발생 빈도 감소)
     semaphore = asyncio.Semaphore(configuration.ingestion_concurrency)
     
     async def process_with_semaphore(img_path: str) -> tuple[str, IngestionMetadata]:
         async with semaphore:
-            # Rate Limit 방지를 위한 약간의 딜레이
+            # Rate Limit 방지를 위한 약간의 딜레이 (with_retry가 대부분 처리하지만 여전히 필요)
             await asyncio.sleep(0.2)
-            metadata = await ingest_image(img_path, config)
-            return (img_path, metadata)
+            # ✅ 안전한 실행 함수 사용 (에러 발생 시에도 계속 진행)
+            return await execute_ingestion_safely(img_path, config)
     
-    # 병렬 처리
+    # 병렬 처리 (에러는 return_exceptions=True로 처리)
     tasks = [process_with_semaphore(img) for img in images]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    # 결과 정리
+    # 결과 정리 (에러는 execute_ingestion_safely에서 이미 처리됨)
     metadata_dict: dict[str, IngestionMetadata] = {}
     for result in results:
         if isinstance(result, Exception):
-            logger.error(f"Batch ingestion 에러: {result}")
+            # 예상치 못한 에러 (실행 함수에서 잡지 못한 경우)
+            logger.error(f"Batch ingestion 예상치 못한 에러: {result}")
             continue
         img_path, metadata = result
         metadata_dict[img_path] = metadata
@@ -177,6 +217,74 @@ async def batch_ingestion(
     )
     
     return metadata_dict
+
+
+# ============================================================
+# 안전한 실행 함수 (open_deep_research 패턴)
+# ============================================================
+
+async def execute_ingestion_safely(
+    img_path: str, 
+    config: Optional[RunnableConfig] = None
+) -> tuple[str, IngestionMetadata]:
+    """안전하게 Ingestion을 실행 (에러 발생 시에도 계속 진행).
+    
+    open_deep_research의 execute_tool_safely 패턴을 따름.
+    에러 발생 시 기본값을 반환하여 프로세스가 중단되지 않도록 함.
+    
+    Args:
+        img_path: 이미지 경로
+        config: LangGraph 런타임 설정
+        
+    Returns:
+        (image_path, IngestionMetadata) 튜플
+    """
+    try:
+        metadata = await ingest_image(img_path, config)
+        return (img_path, metadata)
+    except Exception as e:
+        logger.warning(f"Ingestion 에러 ({img_path}): {e}")
+        # 에러 발생 시 기본값 반환 (프로세스 중단 없음)
+        return (img_path, IngestionMetadata(
+            image_path=img_path,
+            description="분석 실패",
+            ocr_text="",
+            confidence_score=0.0,
+            needs_visual_refinement=True,
+            suggested_categories=[],
+            ingestion_error=str(e)
+        ))
+
+
+async def execute_vision_analysis_safely(
+    img_path: str,
+    config: Optional[RunnableConfig] = None
+) -> RefinementResult:
+    """안전하게 Vision 분석을 실행 (에러 발생 시에도 계속 진행).
+    
+    open_deep_research의 execute_tool_safely 패턴을 따름.
+    에러 발생 시 기본값을 반환하여 프로세스가 중단되지 않도록 함.
+    
+    Args:
+        img_path: 이미지 경로
+        config: LangGraph 런타임 설정
+        
+    Returns:
+        RefinementResult 객체
+    """
+    try:
+        return await analyze_image(img_path, config)
+    except Exception as e:
+        logger.warning(f"Vision 분석 에러 ({img_path}): {e}")
+        # 에러 발생 시 기본값 반환 (프로세스 중단 없음)
+        return RefinementResult(
+            image_path=img_path,
+            objects=[],
+            scene="분석 실패",
+            extracted_text="",
+            suggested_category="기타",
+            confidence=0.0
+        )
 
 
 # ============================================================
@@ -234,6 +342,8 @@ async def analyze_image(
     needs_visual_refinement=True인 이미지에 대해 상세 분석을 수행합니다.
     객체, 장면, 텍스트, 카테고리 등을 추출합니다.
     
+    open_deep_research 방식: with_retry()로 자동 재시도 처리
+    
     Args:
         image_path: 분석할 이미지 경로
         config: LangGraph 런타임 설정
@@ -244,19 +354,34 @@ async def analyze_image(
     configuration = Configuration.from_runnable_config(config)
     
     # 이미지를 base64로 인코딩
-    image_base64 = load_image_as_base64(image_path)
-    media_type = get_image_media_type(image_path)
+    try:
+        image_base64 = load_image_as_base64(image_path)
+        media_type = get_image_media_type(image_path)
+    except FileNotFoundError as e:
+        return RefinementResult(
+            image_path=image_path,
+            objects=[],
+            scene="파일을 찾을 수 없음",
+            extracted_text="",
+            suggested_category="기타",
+            confidence=0.0
+        )
     
-    # Vision 모델 설정 (전역 인스턴스 재사용)
+    # Vision 모델 설정 (with_retry로 자동 재시도)
     api_key = get_api_key_for_model(configuration.vision_model, config)
     model_config = {
         "model": configuration.vision_model,
         "max_tokens": configuration.max_tokens,
         "api_key": api_key,
     }
-    model = configurable_model.with_config(model_config)
+    # with_retry() 추가: rate limit 자동 처리
+    model = (
+        configurable_model
+        .with_config(model_config)
+        .with_retry(stop_after_attempt=configuration.max_structured_output_retries)
+    )
     
-    # Vision API 호출
+    # Vision API 호출 (rate limit은 with_retry가 자동 처리)
     message = HumanMessage(
         content=[
             {"type": "text", "text": VISION_ANALYSIS_PROMPT},
@@ -285,8 +410,8 @@ async def analyze_image(
         )
         
     except Exception as e:
+        # with_retry가 모든 재시도를 시도했지만 실패한 경우
         logger.error(f"이미지 분석 실패 ({image_path}): {e}")
-        # 실패 시 기본값 반환
         return RefinementResult(
             image_path=image_path,
             objects=[],

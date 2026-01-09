@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from typing import Literal
 
 from langchain.chat_models import init_chat_model
@@ -31,10 +32,13 @@ from screenshot_analyzer.state import (
     StrategyComplete,
 )
 from screenshot_analyzer.utils import (
-    analyze_image,
     batch_ingestion,
+    execute_vision_analysis_safely,
     get_api_key_for_model,
 )
+
+# 로깅 설정
+logger = logging.getLogger(__name__)
 
 # ============================================================
 # 설정 가능한 모델 초기화
@@ -169,9 +173,14 @@ async def strategist_agent(
         "api_key": get_api_key_for_model(configuration.analysis_model, config),
     }
     
-    # 도구 바인딩
+    # 도구 바인딩 + with_retry() 추가 (open_deep_research 방식)
     tools = [DesignFolderStructure, ReviseStructure, StrategyComplete]
-    model_with_tools = configurable_model.bind_tools(tools).with_config(model_config)
+    model_with_tools = (
+        configurable_model
+        .bind_tools(tools)
+        .with_retry(stop_after_attempt=configuration.max_structured_output_retries)
+        .with_config(model_config)
+    )
     
     # 메시지 구성
     messages = state.get("messages", [])
@@ -344,9 +353,14 @@ async def classifier_agent(
         "api_key": get_api_key_for_model(configuration.analysis_model, config),
     }
     
-    # 도구 바인딩
+    # 도구 바인딩 + with_retry() 추가 (open_deep_research 방식)
     tools = [ClassifyImages, RequestRefinement, ReportAmbiguity, ClassificationComplete]
-    model_with_tools = configurable_model.bind_tools(tools).with_config(model_config)
+    model_with_tools = (
+        configurable_model
+        .bind_tools(tools)
+        .with_retry(stop_after_attempt=configuration.max_structured_output_retries)
+        .with_config(model_config)
+    )
     
     # 메시지 구성
     messages = state.get("messages", [])
@@ -533,26 +547,38 @@ async def vision_refiner(
             update={"current_phase": "classifier"}
         )
     
-    # VLM 분석 실행
-    new_results = {}
+    # 동시성 제한 (gpt-4o TPM 제한 고려)
+    # open_deep_research 방식: 동시성 제한 + with_retry 자동 재시도
+    semaphore = asyncio.Semaphore(configuration.refinement_concurrency)
     
-    for img_path in image_paths:
-        try:
-            # 고성능 VLM으로 분석
-            result = await analyze_image(img_path, config)
-            new_results[img_path] = {
+    async def process_with_semaphore(img_path: str) -> tuple[str, dict]:
+        async with semaphore:
+            # Rate Limit 방지를 위한 약간의 딜레이 (with_retry가 대부분 처리)
+            await asyncio.sleep(0.5)
+            
+            # 안전한 실행 함수 사용 (에러 발생 시에도 계속 진행)
+            result = await execute_vision_analysis_safely(img_path, config)
+            
+            return (img_path, {
                 "analysis": result.model_dump(),
                 "answer": questions.get(img_path, ""),
                 "recommended_folder": result.suggested_category,
-            }
-        except Exception as e:
-            new_results[img_path] = {
-                "error": str(e),
-                "answer": "분석 실패",
-            }
-        
-        # Rate Limit 방지
-        await asyncio.sleep(1)
+            })
+    
+    # 병렬 처리 (동시성 제한 적용, 에러는 안전한 실행 함수에서 처리)
+    tasks = [process_with_semaphore(img_path) for img_path in image_paths]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # 결과 정리 (에러는 execute_vision_analysis_safely에서 이미 처리됨)
+    new_results = {}
+    for result in results:
+        if isinstance(result, Exception):
+            # 예상치 못한 에러 (실행 함수에서 잡지 못한 경우)
+            logger.error(f"Vision refinement 예상치 못한 에러: {result}")
+            # 에러 정보를 결과에 포함 (부분 성공 허용)
+            continue
+        img_path, result_dict = result
+        new_results[img_path] = result_dict
     
     # 기존 결과에 병합
     current_results = state.get("refinement_results", {})

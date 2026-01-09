@@ -35,15 +35,28 @@ class Configuration(BaseModel):
         }
     )
     ingestion_concurrency: int = Field(
-        default=5,
+        default=3,
         metadata={
             "x_oap_ui_config": {
                 "type": "slider",
-                "default": 5,
+                "default": 3,
                 "min": 1,
-                "max": 10,
+                "max": 5,
                 "step": 1,
-                "description": "Ingestion 동시 처리 수 (Rate Limit 고려)"
+                "description": "Ingestion 동시 처리 수 (Rate Limit 고려, 기본값: 3 권장)"
+            }
+        }
+    )
+    refinement_concurrency: int = Field(
+        default=2,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "slider",
+                "default": 2,
+                "min": 1,
+                "max": 3,
+                "step": 1,
+                "description": "Vision Refinement 동시 처리 수 (gpt-4o TPM 제한 고려, 기본값: 2 권장)"
             }
         }
     )
@@ -95,6 +108,19 @@ class Configuration(BaseModel):
             }
         }
     )
+    max_structured_output_retries: int = Field(
+        default=3,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "slider",
+                "default": 3,
+                "min": 1,
+                "max": 5,
+                "step": 1,
+                "description": "구조화된 출력 실패 시 최대 재시도 횟수 (with_retry용)"
+            }
+        }
+    )
 
     @classmethod
     def from_runnable_config(
@@ -112,7 +138,8 @@ class Configuration(BaseModel):
             elif os.environ.get(field_name.upper()):
                 env_value = os.environ.get(field_name.upper())
                 if field_name in ["max_tokens", "max_analysis_iterations", 
-                                   "ingestion_concurrency"]:
+                                   "ingestion_concurrency", "refinement_concurrency",
+                                   "max_structured_output_retries"]:
                     values[field_name] = int(env_value)  # type: ignore
                 elif field_name == "refinement_threshold":
                     values[field_name] = float(env_value)  # type: ignore
