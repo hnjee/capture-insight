@@ -57,14 +57,14 @@ INGESTION_PROMPT = """당신은 스크린샷 정리 전문가입니다. 주어�
 }}
 ```
 
-### 예시 3: 쇼핑 앱 상품 페이지
+### 예시 3: 패션 상품 페이지
 ```json
 {{
   "description": "나이키 에어맥스 운동화 상품 상세 페이지",
   "ocr_text": "Nike Air Max, 139,000원, 무료배송, 쿠팡",
   "confidence_score": 0.92,
   "needs_visual_refinement": false,
-  "suggested_categories": ["쇼핑", "패션", "신발"]
+  "suggested_categories": ["패션", "신발", "운동화"]
 }}
 ```
 

@@ -81,7 +81,7 @@ class DesignFolderStructure(BaseModel):
     """
     
     folders: List[str] = Field(
-        description="폴더 리스트. 3-7개 정도의 1단계 폴더명 (예: ['패션', '건강식품', '쇼핑'])"
+        description="폴더 리스트. 1단계 폴더명 (예: ['패션', '건강', '음식']) - 내용 중심으로 설계"
     )
     folder_descriptions: Dict[str, str] = Field(
         description="각 폴더의 분류 기준 설명. {폴더명: 설명}"
@@ -271,7 +271,7 @@ class ClassificationState(TypedDict):
     existing_categories: Optional[list[str]]
     
     # === Strategist 관리 데이터 ===
-    current_folders: List[str]  # 1단계 폴더 리스트 (예: ["패션", "건강식품", "쇼핑"])
+    current_folders: List[str]  # 1단계 폴더 리스트 (예: ["패션", "건강", "음식"]) - 내용 중심
     folder_descriptions: Dict[str, str]  # {폴더명: 분류 기준}
     
     # === Classifier 관리 데이터 ===
