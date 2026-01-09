@@ -236,22 +236,31 @@ Strategist가 설계한 폴더 구조에 따라 각 이미지를 적절한 폴�
 ```
 
 ### 2. **ClassifyImages** (확신 있는 이미지 분류)
-확신 있는 이미지들을 폴더에 배정합니다.
+확신도 0.7 이상인 이미지들을 폴더에 배정합니다.
+
+**CRITICAL**: assignments는 반드시 {{이미지경로: 폴더명}} 형태의 딕셔너리여야 합니다!
 
 **예시:**
 ```json
 {{
   "assignments": {{
-    "/path/to/image1.jpg": "패션",
-    "/path/to/image2.jpg": "건강"
+    "examples/screenshots/IMG_5779.PNG": "건강",
+    "examples/screenshots/IMG_6677.PNG": "패션",
+    "examples/screenshots/IMG_7943.PNG": "쇼핑"
   }},
   "confidence_scores": {{
-    "/path/to/image1.jpg": 0.9,
-    "/path/to/image2.jpg": 0.85
+    "examples/screenshots/IMG_5779.PNG": 0.95,
+    "examples/screenshots/IMG_6677.PNG": 0.88,
+    "examples/screenshots/IMG_7943.PNG": 0.92
   }},
-  "reasoning": "이미지1은 명확한 의류 상품 페이지, 이미지2는 건강식품 정보"
+  "reasoning": "IMG_5779는 영양제 상품으로 건강 폴더에 분류. IMG_6677은 패션 쇼츠로 패션 폴더에 분류."
 }}
 ```
+
+**⚠️ 중요**: 
+- assignments는 절대 비어있으면 안 됩니다!
+- 이미지 경로는 위의 "분류 대상 이미지 메타데이터"에 나온 경로를 정확히 사용하세요
+- 폴더명은 위의 "폴더 구조" 목록에 있는 것만 사용하세요
 
 ### 3. **RequestRefinement** (VLM 정밀분석 요청)
 텍스트만으로는 판단이 불가능할 때 VLM 정밀분석을 요청합니다.
@@ -303,9 +312,18 @@ Strategist가 설계한 폴더 구조에 따라 각 이미지를 적절한 폴�
 - needs_visual_refinement=true인 이미지는 `RequestRefinement`로 VLM 분석 요청
 - 여러 폴더에 해당할 것 같으면 가장 적합한 하나를 선택하거나 `ReportAmbiguity`
 - 어떤 폴더에도 맞지 않으면 `ReportAmbiguity`로 새 폴더 제안
+- **ClassifyImages 호출 시 assignments는 절대 비어있으면 안 됩니다!**
+
+**CRITICAL: 항상 think_tool을 먼저 호출하여 분석 및 계획을 수립한 후, 다른 도구를 호출하세요.**
 """
 
 CLASSIFIER_HUMAN_PROMPT = """현재 상황을 분석하고 이미지들을 분류해주세요.
+
+## 사용 가능한 폴더
+{folders}
+
+## 각 폴더 설명
+{folder_descriptions}
 
 ## 분류 대상 이미지 메타데이터
 {pending_metadata}
@@ -315,6 +333,31 @@ CLASSIFIER_HUMAN_PROMPT = """현재 상황을 분석하고 이미지들을 분�
 
 ## 현재까지 분류 결과
 {current_assignments}
+
+## 중요: ClassifyImages 호출 형식
+
+**ClassifyImages를 호출할 때는 반드시 다음 형식을 따르세요:**
+```json
+{{
+    "assignments": {{
+        "이미지경로1": "폴더명1",
+        "이미지경로2": "폴더명2",
+        "이미지경로3": "폴더명3"
+    }},
+    "confidence_scores": {{
+        "이미지경로1": 0.95,
+        "이미지경로2": 0.88,
+        "이미지경로3": 0.92
+    }},
+    "reasoning": "이미지경로1은 '메가트루 파워 영양제'로 OCR에 '비타민'이 명확하므로 건강 폴더에 분류. 이미지경로2는 '화이트 롱스커트 쇼츠 영상'으로 패션 폴더에 분류..."
+}}
+```
+
+**CRITICAL**: 
+- assignments는 반드시 실제 이미지 경로와 폴더명을 포함해야 합니다
+- 이미지 경로는 위의 "분류 대상 이미지 메타데이터"에 나온 "image_path"를 정확히 사용하세요
+- 폴더명은 위의 "사용 가능한 폴더" 목록에 있는 것만 사용하세요
+- assignments가 비어있으면 안 됩니다!
 
 위 정보를 바탕으로 적절한 도구를 호출하세요."""
 

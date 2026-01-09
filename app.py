@@ -418,72 +418,55 @@ def main():
     if st.session_state.analysis_result:
         result = st.session_state.analysis_result
         classifications = result.get("classifications", {})
-        insights = result.get("category_insights", {})
-        report = result.get("final_report", "")
         
         st.markdown("---")
         st.markdown("## 📊 분석 결과")
         
         # 탭으로 결과 구분
-        tab1, tab2, tab3 = st.tabs(["📁 폴더 분류", "💡 인사이트", "📄 보고서"])
+        tab1, tab2 = st.tabs(["📁 폴더구조", "🖼️ 이미지별 폴더 분류된 결과"])
         
-        # 탭 1: 폴더 분류 결과
+        # 탭 1: 폴더구조
         with tab1:
-            st.markdown("### 📂 카테고리별 분류 결과")
+            st.markdown("### 📂 폴더 구조")
             
             # 폴더 트리 표시
             folder_tree = build_folder_tree(classifications)
             st.code(folder_tree, language=None)
-            
-            # 카테고리별 통계
-            category_counts = {}
-            for img, cls in classifications.items():
-                if isinstance(cls, dict):
-                    cat = cls.get("category", "기타")
-                    category_counts[cat] = category_counts.get(cat, 0) + 1
-            
-            st.markdown("#### 📈 카테고리별 통계")
-            cols = st.columns(min(len(category_counts), 4))
-            for i, (cat, count) in enumerate(sorted(category_counts.items(), key=lambda x: -x[1])):
-                with cols[i % 4]:
-                    st.metric(cat, f"{count}장")
         
-        # 탭 2: 인사이트
+        # 탭 2: 이미지별 폴더 분류된 결과
         with tab2:
-            st.markdown("### 💡 카테고리별 인사이트")
+            st.markdown("### 🖼️ 이미지별 폴더 분류 결과")
             
-            if insights:
-                for category, insight_data in insights.items():
-                    with st.expander(f"📂 {category}", expanded=True):
-                        if isinstance(insight_data, dict):
-                            # 트렌드
-                            if "trends" in insight_data:
-                                st.markdown("**🔥 트렌드**")
-                                for trend in insight_data.get("trends", []):
-                                    st.markdown(f"- {trend}")
-                            
-                            # 추천
-                            if "recommendations" in insight_data:
-                                st.markdown("**💡 추천**")
-                                for rec in insight_data.get("recommendations", []):
-                                    st.markdown(f"- {rec}")
-                            
-                            # 요약
-                            if "summary" in insight_data:
-                                st.markdown("**📝 요약**")
-                                st.markdown(insight_data.get("summary", ""))
-                        else:
-                            st.write(insight_data)
+            if classifications:
+                # 카테고리별로 그룹화
+                category_groups = {}
+                for img_path, cls in classifications.items():
+                    if isinstance(cls, dict):
+                        category = cls.get("category", "기타")
+                    elif isinstance(cls, str):
+                        category = cls
+                    else:
+                        category = "기타"
+                    
+                    if category not in category_groups:
+                        category_groups[category] = []
+                    category_groups[category].append(img_path)
+                
+                # 카테고리별로 표시
+                for category in sorted(category_groups.keys()):
+                    with st.expander(f"📂 {category} ({len(category_groups[category])}장)", expanded=True):
+                        # 이미지 그리드
+                        images_in_category = category_groups[category]
+                        cols = st.columns(4)
+                        for i, img_path in enumerate(images_in_category):
+                            with cols[i % 4]:
+                                try:
+                                    st.image(img_path, use_container_width=True)
+                                    st.caption(Path(img_path).name)
+                                except Exception:
+                                    st.markdown(f"🖼️ {Path(img_path).name}")
             else:
-                st.info("인사이트 정보가 없습니다.")
-        
-        # 탭 3: 보고서
-        with tab3:
-            st.markdown("### 📄 분석 보고서")
-            if report:
-                st.markdown(report)
-            else:
-                st.info("보고서가 생성되지 않았습니다.")
+                st.info("분류된 이미지가 없습니다.")
         
         # ============================================================
         # LangSmith 공개 링크 (있을 때만 표시)

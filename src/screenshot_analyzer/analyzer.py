@@ -349,6 +349,15 @@ async def strategist_tools(
                 name=tool_name,
                 tool_call_id=tool_call["id"],
             ))
+        
+        else:
+            # 알 수 없는 도구 호출 - 메시지 체인 유지를 위해 ToolMessage 추가
+            logger.warning(f"Strategist: 알 수 없는 도구 호출: {tool_name}. 메시지 체인 유지를 위해 응답을 추가합니다.")
+            tool_messages.append(ToolMessage(
+                content=f"경고: 알 수 없는 도구 '{tool_name}'가 호출되었습니다. 사용 가능한 도구: DesignFolderStructure, ReviseStructure, StrategyComplete",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+            ))
     
     update_payload["messages"] = tool_messages
     
@@ -390,11 +399,18 @@ async def classifier(
         logger.error("Classifier: current_folders가 비어있습니다. 기본값을 사용합니다.")
         current_folders = ["기타"]
     
-    # 미분류 이미지의 메타데이터
-    pending_metadata = {
-        path: image_metadatas.get(path, {})
-        for path in pending_images[:30]  # 한 번에 30개까지만 처리
-    }
+    # 미분류 이미지의 메타데이터 (더 명확하게)
+    pending_metadata_list = []
+    for path in pending_images[:30]:  # 한 번에 30개까지만 처리
+        meta = image_metadatas.get(path, {})
+        pending_metadata_list.append({
+            "image_path": path,  # 🔥 명확히 표시
+            "description": meta.get("description", ""),
+            "ocr_text": meta.get("ocr_text", ""),
+            "confidence_score": meta.get("confidence_score", 0),
+            "suggested_categories": meta.get("suggested_categories", []),
+            "needs_visual_refinement": meta.get("needs_visual_refinement", False),
+        })
     
     # 시스템 프롬프트 구성
     system_prompt = CLASSIFIER_SYSTEM_PROMPT.format(
@@ -409,7 +425,9 @@ async def classifier(
     
     # Human 프롬프트 구성
     human_prompt = CLASSIFIER_HUMAN_PROMPT.format(
-        pending_metadata=json.dumps(pending_metadata, ensure_ascii=False, indent=2),
+        folders=json.dumps(current_folders, ensure_ascii=False, indent=2),
+        folder_descriptions=json.dumps(folder_descriptions, ensure_ascii=False, indent=2),
+        pending_metadata=json.dumps(pending_metadata_list, ensure_ascii=False, indent=2),  # 🔥 개선
         refinement_results=json.dumps(refinement_results, ensure_ascii=False, indent=2) if refinement_results else "없음",
         current_assignments=json.dumps(assignments, ensure_ascii=False, indent=2) if assignments else "없음",
     )
@@ -432,8 +450,37 @@ async def classifier(
     
     # 메시지 구성
     messages = state.get("messages", [])
-    if state.get("current_phase") != "classifier":
+    
+    # Phase 전환 시 또는 메시지가 없을 때 초기화
+    if not messages or state.get("current_phase") != "classifier":
         messages = [SystemMessage(content=system_prompt)]
+    else:
+        # 메시지 체인 검증: 마지막 assistant message의 tool_calls가 모두 응답되었는지 확인
+        if messages:
+            last_message = messages[-1]
+            # 마지막 메시지가 AIMessage이고 tool_calls가 있는 경우
+            if isinstance(last_message, AIMessage) and hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+                # tool_calls에 대한 ToolMessage가 모두 있는지 확인
+                tool_call_ids = set()
+                for tc in last_message.tool_calls:
+                    if isinstance(tc, dict):
+                        tool_call_ids.add(tc.get("id"))
+                    elif hasattr(tc, 'get'):
+                        tool_call_ids.add(tc.get("id"))
+                    elif hasattr(tc, 'id'):
+                        tool_call_ids.add(tc.id)
+                
+                tool_message_ids = set()
+                for msg in messages:
+                    if isinstance(msg, ToolMessage):
+                        if hasattr(msg, 'tool_call_id'):
+                            tool_message_ids.add(msg.tool_call_id)
+                
+                missing_ids = tool_call_ids - tool_message_ids
+                if missing_ids:
+                    logger.warning(f"Classifier: 누락된 tool_call 응답이 있습니다. 메시지를 초기화합니다. missing_ids: {missing_ids}")
+                    messages = [SystemMessage(content=system_prompt)]
+    
     messages.append(HumanMessage(content=human_prompt))
     
     # LLM 호출
@@ -526,7 +573,52 @@ async def classifier_tools(
             
             # assignments 유효성 검사 및 단순 폴더명으로 변환
             if not new_assignments:
-                logger.warning("Classifier: assignments가 비어있습니다.")
+                logger.error(f"❌ ClassifyImages의 assignments가 비어있습니다!")
+                logger.error(f"받은 args: {tool_args}")
+                
+                # 🔥 LLM에게 명확한 피드백
+                error_message = """ERROR: assignments가 비어있습니다!
+
+ClassifyImages를 호출할 때는 반드시 다음 형식을 따라주세요:
+
+{{
+    "assignments": {{
+        "이미지경로1": "폴더명1",
+        "이미지경로2": "폴더명2"
+    }},
+    "confidence_scores": {{
+        "이미지경로1": 0.95,
+        "이미지경로2": 0.88
+    }},
+    "reasoning": "분류 이유..."
+}}
+
+예시:
+{{
+    "assignments": {{
+        "examples/screenshots/IMG_5779.PNG": "건강",
+        "examples/screenshots/IMG_6677.PNG": "패션"
+    }},
+    "confidence_scores": {{
+        "examples/screenshots/IMG_5779.PNG": 0.95,
+        "examples/screenshots/IMG_6677.PNG": 0.88
+    }},
+    "reasoning": "IMG_5779는 영양제 상품으로 건강 폴더에 분류"
+}}
+
+**중요**: 
+- assignments는 반드시 {{이미지경로: 폴더명}} 형태의 딕셔너리여야 합니다
+- 이미지 경로는 "분류 대상 이미지 메타데이터"에 나온 "image_path"를 정확히 사용하세요
+- 폴더명은 "사용 가능한 폴더" 목록에 있는 것만 사용하세요
+
+다시 시도해주세요."""
+
+                tool_messages.append(ToolMessage(
+                    content=error_message,
+                    name=tool_name,
+                    tool_call_id=tool_call["id"],
+                ))
+                continue  # 다음 tool_call로
             else:
                 # assignments의 값이 단순 폴더명인지 확인 (중첩 구조 제거)
                 validated_assignments = {}
@@ -569,7 +661,13 @@ async def classifier_tools(
             
             # 유효성 검사
             if not image_paths:
-                logger.warning("Classifier: RequestRefinement의 image_paths가 비어있습니다.")
+                logger.warning("Classifier: RequestRefinement의 image_paths가 비어있습니다. LLM에게 피드백을 전달합니다.")
+                # 메시지 체인 유지를 위해 ToolMessage 추가
+                tool_messages.append(ToolMessage(
+                    content=f"경고: image_paths가 비어있습니다. 정밀분석이 필요한 이미지 경로를 포함해주세요. 이유: {reason or '없음'}",
+                    name=tool_name,
+                    tool_call_id=tool_call["id"],
+                ))
             else:
                 # VLM 정밀분석 요청 저장
                 update_payload["refinement_requests"] = {
@@ -616,6 +714,15 @@ async def classifier_tools(
             
             tool_messages.append(ToolMessage(
                 content=f"Classification 완료: {summary}\n총 {total_classified}장 분류됨",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+            ))
+        
+        else:
+            # 알 수 없는 도구 호출 - 메시지 체인 유지를 위해 ToolMessage 추가
+            logger.warning(f"Classifier: 알 수 없는 도구 호출: {tool_name}. 메시지 체인 유지를 위해 응답을 추가합니다.")
+            tool_messages.append(ToolMessage(
+                content=f"경고: 알 수 없는 도구 '{tool_name}'가 호출되었습니다. 사용 가능한 도구: ClassifyImages, RequestRefinement, ReportAmbiguity, ClassificationComplete",
                 name=tool_name,
                 tool_call_id=tool_call["id"],
             ))
