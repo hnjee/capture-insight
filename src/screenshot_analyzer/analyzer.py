@@ -130,7 +130,7 @@ def _get_suggested_categories_distribution(image_metadatas: dict) -> str:
     return json.dumps(dict(counter.most_common(15)), ensure_ascii=False, indent=2)
 
 
-async def strategist_agent(
+async def strategist(
     state: ClassificationState, 
     config: RunnableConfig
 ) -> Command[Literal["strategist_tools"]]:
@@ -204,7 +204,7 @@ async def strategist_agent(
 async def strategist_tools(
     state: ClassificationState, 
     config: RunnableConfig
-) -> Command[Literal["strategist_agent", "classifier_agent", "__end__"]]:
+) -> Command[Literal["strategist", "classifier", "__end__"]]:
     """Strategist의 도구 실행."""
     configuration = Configuration.from_runnable_config(config)
     messages = state.get("messages", [])
@@ -213,7 +213,7 @@ async def strategist_tools(
     # 도구 호출이 없으면 Classifier로 전환
     if not most_recent_message or not most_recent_message.tool_calls:
         return Command(
-            goto="classifier_agent",
+            goto="classifier",
             update={"current_phase": "classifier"}
         )
     
@@ -291,17 +291,17 @@ async def strategist_tools(
     
     if goto_classifier:
         return Command(
-            goto="classifier_agent",
+            goto="classifier",
             update={**update_payload, "current_phase": "classifier", "classify_iteration": 0}
         )
     
     return Command(
-        goto="strategist_agent",
+        goto="strategist",
         update=update_payload,
     )
 
 
-async def classifier_agent(
+async def classifier(
     state: ClassificationState, 
     config: RunnableConfig
 ) -> Command[Literal["classifier_tools"]]:
@@ -384,7 +384,7 @@ async def classifier_agent(
 async def classifier_tools(
     state: ClassificationState, 
     config: RunnableConfig
-) -> Command[Literal["classifier_agent", "strategist_agent", "vision_refiner", "__end__"]]:
+) -> Command[Literal["classifier", "strategist", "vision_refiner", "__end__"]]:
     """Classifier의 도구 실행."""
     configuration = Configuration.from_runnable_config(config)
     messages = state.get("messages", [])
@@ -515,12 +515,12 @@ async def classifier_tools(
     
     if goto_strategist:
         return Command(
-            goto="strategist_agent",
+            goto="strategist",
             update={**update_payload, "current_phase": "strategist"}
         )
     
     return Command(
-        goto="classifier_agent",
+        goto="classifier",
         update=update_payload,
     )
 
@@ -528,7 +528,7 @@ async def classifier_tools(
 async def vision_refiner(
     state: ClassificationState, 
     config: RunnableConfig
-) -> Command[Literal["classifier_agent"]]:
+) -> Command[Literal["classifier"]]:
     """Vision Refiner: VLM 정밀분석.
     
     Classifier가 요청한 이미지들을 고성능 VLM으로 분석합니다.
@@ -543,7 +543,7 @@ async def vision_refiner(
     if not image_paths:
         # 요청이 없으면 바로 Classifier로 복귀
         return Command(
-            goto="classifier_agent",
+            goto="classifier",
             update={"current_phase": "classifier"}
         )
     
@@ -585,7 +585,7 @@ async def vision_refiner(
     merged_results = {**current_results, **new_results}
     
     return Command(
-        goto="classifier_agent",
+        goto="classifier",
         update={
             "refinement_results": merged_results,
             "refinement_requests": {},  # 요청 처리 완료
@@ -603,14 +603,14 @@ def create_classification_subgraph():
     )
     
     # 노드 추가
-    builder.add_node("strategist_agent", strategist_agent)
+    builder.add_node("strategist", strategist)
     builder.add_node("strategist_tools", strategist_tools)
-    builder.add_node("classifier_agent", classifier_agent)
+    builder.add_node("classifier", classifier)
     builder.add_node("classifier_tools", classifier_tools)
     builder.add_node("vision_refiner", vision_refiner)
     
     # 시작점: Strategist
-    builder.add_edge(START, "strategist_agent")
+    builder.add_edge(START, "strategist")
     
     return builder.compile()
 

@@ -171,8 +171,6 @@ async def batch_ingestion(
 ) -> dict[str, IngestionMetadata]:
     """모든 이미지를 일괄 Ingestion하여 메타데이터 추출.
     
-    open_deep_research 방식: 동시성 제한 + with_retry 자동 재시도
-    
     Args:
         images: 이미지 경로 리스트
         config: LangGraph 런타임 설정
@@ -189,7 +187,7 @@ async def batch_ingestion(
         async with semaphore:
             # Rate Limit 방지를 위한 약간의 딜레이 (with_retry가 대부분 처리하지만 여전히 필요)
             await asyncio.sleep(0.2)
-            # ✅ 안전한 실행 함수 사용 (에러 발생 시에도 계속 진행)
+            # 안전한 실행 함수 사용 (에러 발생 시에도 계속 진행)
             return await execute_ingestion_safely(img_path, config)
     
     # 병렬 처리 (에러는 return_exceptions=True로 처리)
@@ -217,7 +215,6 @@ async def batch_ingestion(
     )
     
     return metadata_dict
-
 
 # ============================================================
 # 안전한 실행 함수 (open_deep_research 패턴)
