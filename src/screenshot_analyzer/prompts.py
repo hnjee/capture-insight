@@ -94,14 +94,16 @@ Ingestion 단계에서 추출된 메타데이터(description, ocr_text 등)를 �
 4. **중복 방지**: 처음부터 겹치지 않는 구조 설계 (나중에 병합 불필요)
 
 ## 사용 가능한 도구
+- `think_tool`: 전략적 사고 기록 도구. 행동하기 전에 계획을 세우거나 결과를 분석할 때 사용
 - `DesignFolderStructure`: 폴더 구조 설계 (최초 또는 전면 재설계 시)
 - `ReviseStructure`: Classifier 피드백 반영하여 구조 수정
 - `StrategyComplete`: 설계 완료, Classifier로 전환
 
 ## 판단 흐름
-1. 피드백이 없으면 → 메타데이터 분석 후 `DesignFolderStructure`
-2. Classifier 피드백이 있으면 → 피드백 반영하여 `ReviseStructure`
-3. 구조가 안정되면 → `StrategyComplete`
+1. **먼저 `think_tool`로 현재 상황을 분석하고 계획을 세우세요**
+2. 피드백이 없으면 → 메타데이터 분석 후 `DesignFolderStructure`
+3. Classifier 피드백이 있으면 → 피드백 반영하여 `ReviseStructure`
+4. 구조가 안정되면 → `StrategyComplete`
 
 ## 기존 카테고리 (있는 경우)
 {existing_categories}
@@ -149,16 +151,18 @@ Strategist가 설계한 폴더 구조에 따라 각 이미지를 적절한 폴�
 {folder_descriptions}
 
 ## 사용 가능한 도구
+- `think_tool`: 전략적 사고 기록 도구. 각 이미지 분류 전략을 세우거나 결과를 분석할 때 사용
 - `ClassifyImages`: 확신 있는 이미지들을 폴더에 배정
 - `RequestRefinement`: 텍스트만으론 판단 불가 → VLM 정밀분석 요청
 - `ReportAmbiguity`: 폴더 구조에 문제 발견 → Strategist에게 피드백
 - `ClassificationComplete`: 모든 분류 완료
 
 ## 판단 기준
-1. **확신도 0.7 이상**: `ClassifyImages`로 바로 분류
-2. **확신도 0.4~0.7**: 추가 정보 필요 → `RequestRefinement` 고려
-3. **폴더 구조 문제**: 겹침/누락 발견 → `ReportAmbiguity`
-4. **모두 분류 완료**: `ClassificationComplete`
+1. **먼저 `think_tool`로 각 이미지 분류 전략을 세우세요**
+2. **확신도 0.7 이상**: `ClassifyImages`로 바로 분류
+3. **확신도 0.4~0.7**: 추가 정보 필요 → `RequestRefinement` 고려
+4. **폴더 구조 문제**: 겹침/누락 발견 → `ReportAmbiguity`
+5. **모두 분류 완료**: `ClassificationComplete`
 
 ## 주의사항
 - needs_visual_refinement=true인 이미지는 `RequestRefinement`로 VLM 분석 요청

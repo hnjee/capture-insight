@@ -35,6 +35,7 @@ from screenshot_analyzer.utils import (
     batch_ingestion,
     execute_vision_analysis_safely,
     get_api_key_for_model,
+    think_tool,
 )
 
 # 로깅 설정
@@ -174,7 +175,7 @@ async def strategist(
     }
     
     # 도구 바인딩 + with_retry() 추가 (open_deep_research 방식)
-    tools = [DesignFolderStructure, ReviseStructure, StrategyComplete]
+    tools = [think_tool, DesignFolderStructure, ReviseStructure, StrategyComplete]
     model_with_tools = (
         configurable_model
         .bind_tools(tools)
@@ -213,7 +214,7 @@ async def strategist_tools(
     # 도구 호출이 없으면 Classifier로 전환
     if not most_recent_message or not most_recent_message.tool_calls:
         return Command(
-            goto="classifier",
+            goto="classifier_agent",
             update={"current_phase": "classifier"}
         )
     
@@ -235,7 +236,22 @@ async def strategist_tools(
     goto_classifier = False
     should_end = False
     
-    for tool_call in most_recent_message.tool_calls:
+    # think_tool 호출과 다른 도구 호출 분리
+    think_tool_calls = [tc for tc in most_recent_message.tool_calls if tc["name"] == "think_tool"]
+    other_tool_calls = [tc for tc in most_recent_message.tool_calls if tc["name"] != "think_tool"]
+    
+    # think_tool 처리 (사고 과정 기록)
+    for tool_call in think_tool_calls:
+        reflection = tool_call["args"].get("reflection", "")
+        result = f"Reflection recorded: {reflection}"
+        tool_messages.append(ToolMessage(
+            content=result,
+            name="think_tool",
+            tool_call_id=tool_call["id"],
+        ))
+    
+    # 다른 도구들 처리
+    for tool_call in other_tool_calls:
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         
@@ -291,12 +307,12 @@ async def strategist_tools(
     
     if goto_classifier:
         return Command(
-            goto="classifier",
+            goto="classifier_agent",
             update={**update_payload, "current_phase": "classifier", "classify_iteration": 0}
         )
     
     return Command(
-        goto="strategist",
+        goto="strategist_agent",
         update=update_payload,
     )
 
@@ -354,7 +370,7 @@ async def classifier(
     }
     
     # 도구 바인딩 + with_retry() 추가 (open_deep_research 방식)
-    tools = [ClassifyImages, RequestRefinement, ReportAmbiguity, ClassificationComplete]
+    tools = [think_tool, ClassifyImages, RequestRefinement, ReportAmbiguity, ClassificationComplete]
     model_with_tools = (
         configurable_model
         .bind_tools(tools)
@@ -419,7 +435,22 @@ async def classifier_tools(
     goto_refiner = False
     should_end = False
     
-    for tool_call in most_recent_message.tool_calls:
+    # think_tool 호출과 다른 도구 호출 분리
+    think_tool_calls = [tc for tc in most_recent_message.tool_calls if tc["name"] == "think_tool"]
+    other_tool_calls = [tc for tc in most_recent_message.tool_calls if tc["name"] != "think_tool"]
+    
+    # think_tool 처리 (사고 과정 기록)
+    for tool_call in think_tool_calls:
+        reflection = tool_call["args"].get("reflection", "")
+        result = f"Reflection recorded: {reflection}"
+        tool_messages.append(ToolMessage(
+            content=result,
+            name="think_tool",
+            tool_call_id=tool_call["id"],
+        ))
+    
+    # 다른 도구들 처리
+    for tool_call in other_tool_calls:
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         
@@ -515,12 +546,12 @@ async def classifier_tools(
     
     if goto_strategist:
         return Command(
-            goto="strategist",
+            goto="strategist_agent",
             update={**update_payload, "current_phase": "strategist"}
         )
     
     return Command(
-        goto="classifier",
+        goto="classifier_agent",
         update=update_payload,
     )
 
@@ -543,7 +574,7 @@ async def vision_refiner(
     if not image_paths:
         # 요청이 없으면 바로 Classifier로 복귀
         return Command(
-            goto="classifier",
+            goto="classifier_agent",
             update={"current_phase": "classifier"}
         )
     
@@ -585,7 +616,7 @@ async def vision_refiner(
     merged_results = {**current_results, **new_results}
     
     return Command(
-        goto="classifier",
+        goto="classifier_agent",
         update={
             "refinement_results": merged_results,
             "refinement_requests": {},  # 요청 처리 완료
