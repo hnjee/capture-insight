@@ -76,12 +76,12 @@ class RefinementResult(BaseModel):
 class DesignFolderStructure(BaseModel):
     """폴더 구조 설계 도구.
     
-    Strategist가 전체 메타데이터를 조망하여 최적의 폴더 트리를 설계합니다.
+    Strategist가 전체 메타데이터를 조망하여 최적의 폴더 리스트를 설계합니다.
     처음부터 중복 없는 깔끔한 구조를 만들어 CategoryMerge 불필요.
     """
     
-    folder_tree: Dict[str, List[str]] = Field(
-        description="폴더 구조. {메인폴더: [서브폴더1, 서브폴더2]} 형태"
+    folders: List[str] = Field(
+        description="폴더 리스트. 3-7개 정도의 1단계 폴더명 (예: ['패션', '건강식품', '쇼핑'])"
     )
     folder_descriptions: Dict[str, str] = Field(
         description="각 폴더의 분류 기준 설명. {폴더명: 설명}"
@@ -101,8 +101,8 @@ class ReviseStructure(BaseModel):
     changes: List[Dict[str, str]] = Field(
         description="변경 사항 리스트. [{action: 'merge'|'split'|'rename', from: ..., to: ...}]"
     )
-    new_folder_tree: Dict[str, List[str]] = Field(
-        description="수정된 폴더 구조"
+    new_folders: List[str] = Field(
+        description="수정된 폴더 리스트. 3-7개 정도의 1단계 폴더명"
     )
     reasoning: str = Field(
         description="수정 이유"
@@ -115,8 +115,8 @@ class StrategyComplete(BaseModel):
     폴더 구조 설계가 완료되어 Classifier로 넘어갈 준비가 됨.
     """
     
-    final_folder_tree: Dict[str, List[str]] = Field(
-        description="최종 확정된 폴더 구조"
+    final_folders: List[str] = Field(
+        description="최종 확정된 폴더 리스트. 3-7개 정도의 1단계 폴더명"
     )
     summary: str = Field(
         description="설계 요약"
@@ -271,7 +271,7 @@ class ClassificationState(TypedDict):
     existing_categories: Optional[list[str]]
     
     # === Strategist 관리 데이터 ===
-    current_folder_tree: Dict[str, List[str]]  # {메인폴더: [서브폴더들]}
+    current_folders: List[str]  # 1단계 폴더 리스트 (예: ["패션", "건강식품", "쇼핑"])
     folder_descriptions: Dict[str, str]  # {폴더명: 분류 기준}
     
     # === Classifier 관리 데이터 ===
@@ -285,7 +285,7 @@ class ClassificationState(TypedDict):
     # === 안정성 및 제어 ===
     strategy_iteration: int  # Strategist 반복 횟수 (무한루프 방지)
     classify_iteration: int  # Classifier 반복 횟수
-    previous_folder_tree: Optional[Dict]  # 수렴 판단용
+    previous_folders: Optional[List[str]]  # 수렴 판단용
     
     # === 제어 신호 ===
     is_converged: bool  # 수렴 완료 여부
@@ -300,5 +300,5 @@ class ClassificationOutputState(TypedDict):
     """
     
     classifications: dict  # assignments를 변환하여 반환
-    categories: list[str]  # folder_tree의 키들
+    categories: list[str]  # folders 리스트
     vision_results: dict  # refinement_results

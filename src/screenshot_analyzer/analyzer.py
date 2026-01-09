@@ -148,7 +148,7 @@ async def strategist(
     existing_categories = state.get("existing_categories", [])
     strategy_iteration = state.get("strategy_iteration", 0)
     classification_feedback = state.get("classification_feedback", [])
-    current_folder_tree = state.get("current_folder_tree", {})
+    current_folders = state.get("current_folders", [])
     
     # 시스템 프롬프트 구성
     system_prompt = STRATEGIST_SYSTEM_PROMPT.format(
@@ -164,7 +164,7 @@ async def strategist(
         metadata_summary=_summarize_metadata(image_metadatas),
         suggested_categories_distribution=_get_suggested_categories_distribution(image_metadatas),
         classification_feedback="\n".join(classification_feedback) if classification_feedback else "없음",
-        current_folder_tree=json.dumps(current_folder_tree, ensure_ascii=False, indent=2) if current_folder_tree else "없음",
+        current_folders=json.dumps(current_folders, ensure_ascii=False, indent=2) if current_folders else "없음",
     )
     
     # 모델 설정
@@ -213,20 +213,33 @@ async def strategist_tools(
     
     # 도구 호출이 없으면 Classifier로 전환
     if not most_recent_message or not most_recent_message.tool_calls:
+        logger.warning("Strategist: 도구 호출이 없습니다. Classifier로 전환합니다.")
+        current_folders = state.get("current_folders", [])
+        if not current_folders:
+            # 기본값 설정
+            logger.error("Strategist: folders가 비어있습니다. 기본값을 설정합니다.")
+            current_folders = ["기타"]
         return Command(
-            goto="classifier_agent",
-            update={"current_phase": "classifier"}
+            goto="classifier",
+            update={
+                "current_phase": "classifier",
+                "current_folders": current_folders,
+            }
         )
     
-    # 반복 횟수 체크
+    # 반복 횟수 체크 (무한 루프 방지)
     strategy_iteration = state.get("strategy_iteration", 0)
     if strategy_iteration > configuration.max_analysis_iterations:
+        logger.warning(f"Strategist: 최대 반복 횟수({configuration.max_analysis_iterations}) 초과. 강제 종료합니다.")
+        current_folders = state.get("current_folders", [])
+        if not current_folders:
+            current_folders = ["기타"]
         # 강제 종료
         return Command(
             goto=END,
             update={
                 "classifications": state.get("assignments", {}),
-                "categories": list(state.get("current_folder_tree", {}).keys()),
+                "categories": current_folders,
                 "vision_results": state.get("refinement_results", {}),
             }
         )
@@ -253,48 +266,82 @@ async def strategist_tools(
     # 다른 도구들 처리
     for tool_call in other_tool_calls:
         tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
+        tool_args = tool_call.get("args", {})
+        
+        # args 비어있을 때 에러 로그 + 기본값 처리
+        if not tool_args:
+            logger.error(f"Strategist: {tool_name} 도구의 args가 비어있습니다. 기본값을 사용합니다.")
+            tool_args = {}
         
         if tool_name == "DesignFolderStructure":
-            folder_tree = tool_args.get("folder_tree", {})
+            folders = tool_args.get("folders", [])
             folder_descriptions = tool_args.get("folder_descriptions", {})
             reasoning = tool_args.get("reasoning", "")
             
-            update_payload["current_folder_tree"] = folder_tree
-            update_payload["folder_descriptions"] = folder_descriptions
-            update_payload["previous_folder_tree"] = state.get("current_folder_tree")
+            # folders 유효성 검사
+            if not folders or not isinstance(folders, list):
+                logger.error(f"Strategist: folders가 유효하지 않습니다. 기본값을 사용합니다. args: {tool_args}")
+                folders = ["기타"]
+            
+            # 무한 루프 방지: 이전과 동일한 구조인지 확인
+            previous_folders = state.get("previous_folders")
+            if previous_folders and set(folders) == set(previous_folders):
+                logger.warning(f"Strategist: 이전과 동일한 폴더 구조입니다. 수렴으로 간주합니다.")
+                update_payload["is_converged"] = True
+                goto_classifier = True
+            else:
+                update_payload["current_folders"] = folders
+                update_payload["folder_descriptions"] = folder_descriptions
+                update_payload["previous_folders"] = state.get("current_folders", [])
             
             # 미분류 이미지 설정
             images = state.get("images", [])
             update_payload["pending_images"] = images
             
             tool_messages.append(ToolMessage(
-                content=f"폴더 구조 설계 완료\n구조: {json.dumps(folder_tree, ensure_ascii=False)}\n이유: {reasoning}",
+                content=f"폴더 구조 설계 완료\n폴더: {json.dumps(folders, ensure_ascii=False)}\n이유: {reasoning}",
                 name=tool_name,
                 tool_call_id=tool_call["id"],
             ))
             
         elif tool_name == "ReviseStructure":
-            new_folder_tree = tool_args.get("new_folder_tree", {})
+            new_folders = tool_args.get("new_folders", [])
             changes = tool_args.get("changes", [])
             reasoning = tool_args.get("reasoning", "")
             
-            update_payload["previous_folder_tree"] = state.get("current_folder_tree")
-            update_payload["current_folder_tree"] = new_folder_tree
-            update_payload["classification_feedback"] = []  # 피드백 처리 완료
+            # new_folders 유효성 검사
+            if not new_folders or not isinstance(new_folders, list):
+                logger.error(f"Strategist: new_folders가 유효하지 않습니다. 기본값을 사용합니다. args: {tool_args}")
+                new_folders = state.get("current_folders", ["기타"])
+            
+            # 무한 루프 방지: 이전과 동일한 구조인지 확인
+            previous_folders = state.get("previous_folders")
+            if previous_folders and set(new_folders) == set(previous_folders):
+                logger.warning(f"Strategist: 수정 후에도 이전과 동일한 폴더 구조입니다. 수렴으로 간주합니다.")
+                update_payload["is_converged"] = True
+                goto_classifier = True
+            else:
+                update_payload["previous_folders"] = state.get("current_folders", [])
+                update_payload["current_folders"] = new_folders
+                update_payload["classification_feedback"] = []  # 피드백 처리 완료
             
             tool_messages.append(ToolMessage(
-                content=f"폴더 구조 수정 완료\n변경: {json.dumps(changes, ensure_ascii=False)}\n이유: {reasoning}",
+                content=f"폴더 구조 수정 완료\n변경: {json.dumps(changes, ensure_ascii=False)}\n새 폴더: {json.dumps(new_folders, ensure_ascii=False)}\n이유: {reasoning}",
                 name=tool_name,
                 tool_call_id=tool_call["id"],
             ))
             
         elif tool_name == "StrategyComplete":
             goto_classifier = True
-            final_folder_tree = tool_args.get("final_folder_tree", state.get("current_folder_tree", {}))
+            final_folders = tool_args.get("final_folders", state.get("current_folders", []))
             summary = tool_args.get("summary", "")
             
-            update_payload["current_folder_tree"] = final_folder_tree
+            # final_folders 유효성 검사
+            if not final_folders or not isinstance(final_folders, list):
+                logger.error(f"Strategist: final_folders가 유효하지 않습니다. 기본값을 사용합니다. args: {tool_args}")
+                final_folders = state.get("current_folders", ["기타"])
+            
+            update_payload["current_folders"] = final_folders
             update_payload["is_converged"] = False  # Classifier가 확인할 때까지
             
             tool_messages.append(ToolMessage(
@@ -307,12 +354,12 @@ async def strategist_tools(
     
     if goto_classifier:
         return Command(
-            goto="classifier_agent",
+            goto="classifier",
             update={**update_payload, "current_phase": "classifier", "classify_iteration": 0}
         )
     
     return Command(
-        goto="strategist_agent",
+        goto="strategist",
         update=update_payload,
     )
 
@@ -331,12 +378,17 @@ async def classifier(
     # 현재 상태 추출
     images = state.get("images", [])
     image_metadatas = state.get("image_metadatas", {})
-    current_folder_tree = state.get("current_folder_tree", {})
+    current_folders = state.get("current_folders", [])
     folder_descriptions = state.get("folder_descriptions", {})
     assignments = state.get("assignments", {})
     pending_images = state.get("pending_images", images)
     refinement_results = state.get("refinement_results", {})
     classify_iteration = state.get("classify_iteration", 0)
+    
+    # current_folders 유효성 검사
+    if not current_folders:
+        logger.error("Classifier: current_folders가 비어있습니다. 기본값을 사용합니다.")
+        current_folders = ["기타"]
     
     # 미분류 이미지의 메타데이터
     pending_metadata = {
@@ -351,7 +403,7 @@ async def classifier(
         pending_count=len(pending_images),
         classify_iteration=classify_iteration,
         max_iterations=configuration.max_analysis_iterations,
-        folder_tree=json.dumps(current_folder_tree, ensure_ascii=False, indent=2),
+        folders=json.dumps(current_folders, ensure_ascii=False, indent=2),
         folder_descriptions=json.dumps(folder_descriptions, ensure_ascii=False, indent=2),
     )
     
@@ -408,23 +460,31 @@ async def classifier_tools(
     
     # 도구 호출이 없으면 종료
     if not most_recent_message or not most_recent_message.tool_calls:
+        logger.warning("Classifier: 도구 호출이 없습니다. 종료합니다.")
+        current_folders = state.get("current_folders", [])
+        if not current_folders:
+            current_folders = ["기타"]
         return Command(
             goto=END,
             update={
                 "classifications": state.get("assignments", {}),
-                "categories": list(state.get("current_folder_tree", {}).keys()),
+                "categories": current_folders,
                 "vision_results": state.get("refinement_results", {}),
             }
         )
     
-    # 반복 횟수 체크
+    # 반복 횟수 체크 (무한 루프 방지)
     classify_iteration = state.get("classify_iteration", 0)
     if classify_iteration > configuration.max_analysis_iterations:
+        logger.warning(f"Classifier: 최대 반복 횟수({configuration.max_analysis_iterations}) 초과. 강제 종료합니다.")
+        current_folders = state.get("current_folders", [])
+        if not current_folders:
+            current_folders = ["기타"]
         return Command(
             goto=END,
             update={
                 "classifications": state.get("assignments", {}),
-                "categories": list(state.get("current_folder_tree", {}).keys()),
+                "categories": current_folders,
                 "vision_results": state.get("refinement_results", {}),
             }
         )
@@ -452,46 +512,77 @@ async def classifier_tools(
     # 다른 도구들 처리
     for tool_call in other_tool_calls:
         tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
+        tool_args = tool_call.get("args", {})
+        
+        # args 비어있을 때 에러 로그 + 기본값 처리
+        if not tool_args:
+            logger.error(f"Classifier: {tool_name} 도구의 args가 비어있습니다. 기본값을 사용합니다.")
+            tool_args = {}
         
         if tool_name == "ClassifyImages":
             new_assignments = tool_args.get("assignments", {})
             confidence_scores = tool_args.get("confidence_scores", {})
             reasoning = tool_args.get("reasoning", "")
             
-            # 기존 assignments에 병합
-            current_assignments = state.get("assignments", {})
-            merged_assignments = {**current_assignments, **new_assignments}
-            update_payload["assignments"] = merged_assignments
-            
-            # pending_images 업데이트
-            pending = state.get("pending_images", [])
-            new_pending = [p for p in pending if p not in new_assignments]
-            update_payload["pending_images"] = new_pending
-            
-            tool_messages.append(ToolMessage(
-                content=f"분류 완료: {len(new_assignments)}장\n남은 이미지: {len(new_pending)}장\n이유: {reasoning}",
-                name=tool_name,
-                tool_call_id=tool_call["id"],
-            ))
+            # assignments 유효성 검사 및 단순 폴더명으로 변환
+            if not new_assignments:
+                logger.warning("Classifier: assignments가 비어있습니다.")
+            else:
+                # assignments의 값이 단순 폴더명인지 확인 (중첩 구조 제거)
+                validated_assignments = {}
+                current_folders = state.get("current_folders", [])
+                for img_path, folder_name in new_assignments.items():
+                    # folder_name이 리스트나 딕셔너리인 경우 첫 번째 값 추출
+                    if isinstance(folder_name, list):
+                        folder_name = folder_name[0] if folder_name else "기타"
+                        logger.warning(f"Classifier: {img_path}의 폴더명이 리스트입니다. 첫 번째 값 사용: {folder_name}")
+                    elif isinstance(folder_name, dict):
+                        folder_name = list(folder_name.keys())[0] if folder_name else "기타"
+                        logger.warning(f"Classifier: {img_path}의 폴더명이 딕셔너리입니다. 첫 번째 키 사용: {folder_name}")
+                    
+                    # 폴더명이 current_folders에 없으면 경고
+                    if folder_name not in current_folders:
+                        logger.warning(f"Classifier: {img_path}의 폴더명 '{folder_name}'이 current_folders에 없습니다. 그대로 사용합니다.")
+                    
+                    validated_assignments[img_path] = folder_name
+                
+                # 기존 assignments에 병합
+                current_assignments = state.get("assignments", {})
+                merged_assignments = {**current_assignments, **validated_assignments}
+                update_payload["assignments"] = merged_assignments
+                
+                # pending_images 업데이트
+                pending = state.get("pending_images", [])
+                new_pending = [p for p in pending if p not in validated_assignments]
+                update_payload["pending_images"] = new_pending
+                
+                tool_messages.append(ToolMessage(
+                    content=f"분류 완료: {len(validated_assignments)}장\n남은 이미지: {len(new_pending)}장\n이유: {reasoning}",
+                    name=tool_name,
+                    tool_call_id=tool_call["id"],
+                ))
             
         elif tool_name == "RequestRefinement":
             image_paths = tool_args.get("image_paths", [])
             questions = tool_args.get("questions", {})
             reason = tool_args.get("reason", "")
             
-            # VLM 정밀분석 요청 저장
-            update_payload["refinement_requests"] = {
-                "image_paths": image_paths,
-                "questions": questions,
-            }
-            goto_refiner = True
-            
-            tool_messages.append(ToolMessage(
-                content=f"VLM 정밀분석 요청: {len(image_paths)}장\n이유: {reason}",
-                name=tool_name,
-                tool_call_id=tool_call["id"],
-            ))
+            # 유효성 검사
+            if not image_paths:
+                logger.warning("Classifier: RequestRefinement의 image_paths가 비어있습니다.")
+            else:
+                # VLM 정밀분석 요청 저장
+                update_payload["refinement_requests"] = {
+                    "image_paths": image_paths,
+                    "questions": questions,
+                }
+                goto_refiner = True
+                
+                tool_messages.append(ToolMessage(
+                    content=f"VLM 정밀분석 요청: {len(image_paths)}장\n이유: {reason}",
+                    name=tool_name,
+                    tool_call_id=tool_call["id"],
+                ))
             
         elif tool_name == "ReportAmbiguity":
             issue_type = tool_args.get("issue_type", "")
@@ -516,7 +607,12 @@ async def classifier_tools(
             should_end = True
             summary = tool_args.get("summary", "분류 완료")
             total_classified = tool_args.get("total_classified", len(state.get("assignments", {})))
-            categories_found = tool_args.get("categories_found", list(state.get("current_folder_tree", {}).keys()))
+            categories_found = tool_args.get("categories_found", state.get("current_folders", []))
+            
+            # categories_found 유효성 검사
+            if not categories_found or not isinstance(categories_found, list):
+                logger.warning("Classifier: categories_found가 유효하지 않습니다. current_folders를 사용합니다.")
+                categories_found = state.get("current_folders", ["기타"])
             
             tool_messages.append(ToolMessage(
                 content=f"Classification 완료: {summary}\n총 {total_classified}장 분류됨",
@@ -529,11 +625,14 @@ async def classifier_tools(
     if should_end:
         # 최종 결과 반환
         final_assignments = {**state.get("assignments", {}), **update_payload.get("assignments", {})}
+        current_folders = state.get("current_folders", [])
+        if not current_folders:
+            current_folders = ["기타"]
         return Command(
             goto=END,
             update={
                 "classifications": final_assignments,
-                "categories": list(state.get("current_folder_tree", {}).keys()),
+                "categories": current_folders,
                 "vision_results": state.get("refinement_results", {}),
             }
         )
@@ -546,12 +645,12 @@ async def classifier_tools(
     
     if goto_strategist:
         return Command(
-            goto="strategist_agent",
+            goto="strategist",
             update={**update_payload, "current_phase": "strategist"}
         )
     
     return Command(
-        goto="classifier_agent",
+        goto="classifier",
         update=update_payload,
     )
 
@@ -574,7 +673,7 @@ async def vision_refiner(
     if not image_paths:
         # 요청이 없으면 바로 Classifier로 복귀
         return Command(
-            goto="classifier_agent",
+            goto="classifier",
             update={"current_phase": "classifier"}
         )
     
@@ -616,7 +715,7 @@ async def vision_refiner(
     merged_results = {**current_results, **new_results}
     
     return Command(
-        goto="classifier_agent",
+        goto="classifier",
         update={
             "refinement_results": merged_results,
             "refinement_requests": {},  # 요청 처리 완료
