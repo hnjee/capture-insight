@@ -206,49 +206,44 @@ def get_langsmith_trace_url(run_id: str) -> str:
 def build_folder_tree(classifications: dict) -> str:
     """분류 결과를 폴더 트리 형태로 변환합니다."""
     # 카테고리별로 그룹화
-    tree = {}
+    category_groups = {}
     for img_path, cls in classifications.items():
-        if not isinstance(cls, dict):
-            continue
-        category = cls.get("category", "기타")
-        sub_category = cls.get("sub_category", "")
-        
-        if category not in tree:
-            tree[category] = {}
-        if sub_category:
-            if sub_category not in tree[category]:
-                tree[category][sub_category] = []
-            tree[category][sub_category].append(Path(img_path).name)
+        # cls가 dict인 경우와 str인 경우 모두 처리
+        if isinstance(cls, dict):
+            category = cls.get("category", "기타")
+        elif isinstance(cls, str):
+            category = cls
         else:
-            if "_files" not in tree[category]:
-                tree[category]["_files"] = []
-            tree[category]["_files"].append(Path(img_path).name)
+            category = "기타"
+        
+        if category not in category_groups:
+            category_groups[category] = []
+        category_groups[category].append(Path(img_path).name)
     
-    # 트리 문자열 생성
+    # 간단하고 명확한 트리 구조 생성
     lines = ["📁 분류된 스크린샷/"]
-    for category in sorted(tree.keys()):
-        lines.append(f"├── 📂 {category}/")
-        sub_items = tree[category]
-        sub_keys = sorted([k for k in sub_items.keys() if k != "_files"])
+    
+    # 폴더별로 정렬 (이미지 개수 많은 순)
+    sorted_categories = sorted(
+        category_groups.items(), 
+        key=lambda x: -len(x[1])
+    )
+    
+    for i, (category, files) in enumerate(sorted_categories):
+        is_last = (i == len(sorted_categories) - 1)
+        prefix = "└──" if is_last else "├──"
+        lines.append(f"{prefix} 📂 {category}/ ({len(files)}장)")
         
-        for i, sub_cat in enumerate(sub_keys):
-            is_last_sub = (i == len(sub_keys) - 1) and "_files" not in sub_items
-            prefix = "│   └──" if is_last_sub else "│   ├──"
-            lines.append(f"{prefix} 📂 {sub_cat}/")
-            
-            files = sub_items[sub_cat]
-            for j, file in enumerate(files[:3]):  # 최대 3개만 표시
-                file_prefix = "│   │   └──" if j == min(2, len(files)-1) else "│   │   ├──"
-                if is_last_sub:
-                    file_prefix = file_prefix.replace("│   │", "    │")
-                lines.append(f"{file_prefix} 🖼️ {file}")
-            if len(files) > 3:
-                lines.append(f"│   │       ... 외 {len(files)-3}개")
+        # 각 폴더의 이미지 목록 (최대 5개만 표시)
+        for j, file in enumerate(files[:5]):
+            is_last_file = (j == min(4, len(files) - 1))
+            file_prefix = "    └──" if (is_last and is_last_file) else "    ├──"
+            if not is_last:
+                file_prefix = "│   ├──" if not is_last_file else "│   └──"
+            lines.append(f"{file_prefix} 🖼️ {file}")
         
-        if "_files" in sub_items:
-            for j, file in enumerate(sub_items["_files"][:3]):
-                file_prefix = "│   └──" if j == min(2, len(sub_items["_files"])-1) else "│   ├──"
-                lines.append(f"{file_prefix} 🖼️ {file}")
+        if len(files) > 5:
+            lines.append(f"{'    └──' if is_last else '│   └──'} ... 외 {len(files) - 5}개")
     
     return "\n".join(lines)
 
@@ -287,6 +282,244 @@ def main():
         st.session_state.analysis_started = False
     
     # ============================================================
+    # 분석 모드 설정
+    # ============================================================
+    
+    st.sidebar.markdown("### ⚙️ 분석 설정")
+    run_ingestion = st.sidebar.checkbox(
+        "🔄 처음부터 VLM으로 분석 (Ingestion 실행)",
+        value=False,
+        help="체크하면 Ingestion 단계에서 VLM을 호출하여 메타데이터를 새로 추출합니다. 체크하지 않으면 고정된 메타데이터를 사용합니다 (기본값, API 비용 절약)."
+    )
+    # 로직 반전: run_ingestion이 True면 VLM 실행, False면 고정 메타데이터 사용
+    use_fixed_metadata = not run_ingestion
+    
+    # 고정 메타데이터 (테스트용) - 실제 VLM으로 추출한 메타데이터
+    FIXED_METADATA = {
+        "examples/screenshots/IMG_5563.PNG": {
+            "image_path": "examples/screenshots/IMG_5563.PNG",
+            "description": "자는 고양이 사진",
+            "ocr_text": "수연여사, 2025. 9. 17. 오후 1:43",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "동물",
+                "고양이",
+                "사진"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_5202.PNG":{
+            "image_path": "examples/screenshots/IMG_5202.PNG",
+            "description": "오렌지색 인형과 함께 자고 있는 고양이 사진",
+            "ocr_text": "수연여사, 2025. 3. 18. 오전 10:30",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "고양이",
+                "애완동물",
+                "사진"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_5779.PNG": {
+            "image_path": "examples/screenshots/IMG_5779.PNG",
+            "description": "메가트루 파워 비타민 제품 이미지",
+            "ocr_text": "메가트루 파워, 60정, 비타민 100mg",
+            "confidence_score": 0.9,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "건강식품",
+                "비타민",
+                "영양제"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_5780.PNG": {
+            "image_path": "examples/screenshots/IMG_5780.PNG",
+            "description": "비타민 B 제품 상세 이미지",
+            "ocr_text": "비맥스 메타비, 60정, GC녹십자, 2025-03-27",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "건강보조식품",
+                "비타민",
+                "의약품"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_5888.PNG": {
+            "image_path": "examples/screenshots/IMG_5888.PNG",
+            "description": "NOW FOODS 오메가-3 피쉬 오일 보충제",
+            "ocr_text": "Omega-3, Supplement Facts, 7,860원",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "건강보조식품",
+                "영양제",
+                "오메가-3"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_6443.PNG": {
+            "image_path": "examples/screenshots/IMG_6443.PNG",
+            "description": "인생에 대한 성찰과 성장에 관한 메시지",
+            "ocr_text": "Life can be heavy, 인생이 무겁게 느껴질 수 있습니다, catch and release",
+            "confidence_score": 0.88,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "자기계발",
+                "심리",
+                "에세이"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_6686.PNG": {
+            "image_path": "examples/screenshots/IMG_6686.PNG",
+            "description": "패션 스타일링 비디오, 출근 준비에 대한 내용",
+            "ocr_text": "출근 준비 5분 컷, 3가지 조합만 외우세요, 여름, 화이트 롱스커트",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "패션",
+                "비디오",
+                "스타일링"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_7619.PNG": {
+            "image_path": "examples/screenshots/IMG_7619.PNG",
+            "description": "고양이가 침대에 누워있는 모습",
+            "ocr_text": "1.4만, 5,547, Tears - Sabrina Carpenter, @UNDER_WORLD_b1",
+            "confidence_score": 0.75,
+            "needs_visual_refinement": True,
+            "suggested_categories": [
+                "고양이",
+                "반려동물",
+                "동물"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_7943.PNG": {
+            "image_path": "examples/screenshots/IMG_7943.PNG",
+            "description": "ZIGZAG 의류 쇼핑 앱 페이지",
+            "ocr_text": "ZIGZAG, 겨울을 준비하는 가이드건, 최대 69,000원 쿠폰팩",
+            "confidence_score": 0.88,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "패션",
+                "쇼핑 앱",
+                "할인"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_9335.PNG": {
+            "image_path": "examples/screenshots/IMG_9335.PNG",
+            "description": "안락한 침실 사진, 편안한 휴식 공간을 표현",
+            "ocr_text": "a safe place to rest",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "인테리어",
+                "침실",
+                "사진"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_9336.PNG": {
+            "image_path": "examples/screenshots/IMG_9336.PNG",
+            "description": "아늑한 실내 공간의 사진, 조명과 장식이 잘 꾸며져 있음",
+            "ocr_text": "a safe place to rest, happy Sunday",
+            "confidence_score": 0.75,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "인테리어",
+                "실내 공간",
+                "사진"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_9340.PNG": {
+            "image_path": "examples/screenshots/IMG_9340.PNG",
+            "description": "색감 넘치는 인테리어 사진",
+            "ocr_text": "MORE SPAGHETTI, LESS UPSETTI, SUNNY SIDE UP",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "인테리어",
+                "사진",
+                "디자인"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_9604.PNG": {
+            "image_path": "examples/screenshots/IMG_9604.PNG",
+            "description": "마리끌레르 겨울 리드 상품 페이지",
+            "ocr_text": "체크패턴, 129,000원, 69,000 won, 마리끌레르 연말 감사전",
+            "confidence_score": 0.9,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "패션",
+                "의류",
+                "상품 페이지"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_9668.jpg": {
+            "image_path": "examples/screenshots/IMG_9668.jpg",
+            "description": "책 페이지의 일부 텍스트",
+            "ocr_text": "진정성, 지니어스 코드, Ozan Varol, 35세, 25세",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "책",
+                "문서",
+                "교육"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_9691.PNG": {
+            "image_path": "examples/screenshots/IMG_9691.PNG",
+            "description": "생명에 대한 메시지를 담은 글",
+            "ocr_text": "이여령 교수, 메시지는 단순했다, 삶은 아까지 않을 때, 배움과 말, '어디에 마음을 쓰냐'",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "글",
+                "에세이",
+                "생각"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_9891.PNG": {
+            "image_path": "examples/screenshots/IMG_9891.PNG",
+            "description": "커피 데이트 준비 영상",
+            "ocr_text": "Get ready with me for a coffee date, Olivia Dean, Man I Need",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "패션",
+                "브이로그",
+                "데이트"
+            ],
+            "ingestion_error": None
+        },
+        "examples/screenshots/IMG_9903.PNG": {
+            "image_path": "examples/screenshots/IMG_9903.PNG",
+            "description": "패션 스타일 영감 사진, 레이첼 그린 의상 영감",
+            "ocr_text": "Rachel green outfit inspo",
+            "confidence_score": 0.85,
+            "needs_visual_refinement": False,
+            "suggested_categories": [
+                "패션",
+                "스타일",
+                "영감"
+            ],
+            "ingestion_error": None
+        }
+    }
+    
+    # ============================================================
     # 이미지 갤러리
     # ============================================================
     
@@ -303,6 +536,11 @@ def main():
         return
     
     st.markdown(f"**{len(images)}장**의 스크린샷이 준비되어 있습니다.")
+    
+    if use_fixed_metadata:
+        st.info("💾 **고정 메타데이터 사용**: Ingestion 단계를 건너뛰고 저장된 메타데이터를 사용합니다. (API 비용 절약)")
+    else:
+        st.info("🔄 **VLM 분석 모드**: Ingestion 단계에서 VLM을 호출하여 메타데이터를 새로 추출합니다.")
     
     # 이미지 그리드 표시
     cols = st.columns(8)
@@ -362,15 +600,20 @@ def main():
                     from langchain_core.runnables import RunnableConfig
                     config = RunnableConfig(
                         run_id=run_id,
-                        tags=["streamlit", "capture-insight"],
+                        tags=["streamlit", "capture-insight", "test-mode" if use_fixed_metadata else "production"],
                     )
-                    result = await graph.ainvoke(
-                        {
-                            "images": images,
-                            "existing_categories": None,
-                        },
-                        config=config,
-                    )
+                    
+                    # 테스트 모드일 때 고정 메타데이터 포함
+                    input_data = {
+                        "images": images,
+                        "existing_categories": None,
+                    }
+                    
+                    if use_fixed_metadata:
+                        # 고정 메타데이터를 직접 주입 (ingestion 단계 스킵)
+                        input_data["image_metadatas"] = FIXED_METADATA
+                    
+                    result = await graph.ainvoke(input_data, config=config)
                     return result
                 
                 result = asyncio.run(run_graph())
@@ -429,9 +672,46 @@ def main():
         with tab1:
             st.markdown("### 📂 폴더 구조")
             
-            # 폴더 트리 표시
-            folder_tree = build_folder_tree(classifications)
-            st.code(folder_tree, language=None)
+            if classifications:
+                # 카테고리별로 그룹화
+                category_groups = {}
+                for img_path, cls in classifications.items():
+                    if isinstance(cls, dict):
+                        category = cls.get("category", "기타")
+                    elif isinstance(cls, str):
+                        category = cls
+                    else:
+                        category = "기타"
+                    
+                    if category not in category_groups:
+                        category_groups[category] = []
+                    category_groups[category].append(img_path)
+                
+                # 폴더별로 정렬 (이미지 개수 많은 순)
+                sorted_categories = sorted(
+                    category_groups.items(), 
+                    key=lambda x: -len(x[1])
+                )
+                
+                # 폴더 구조를 카드 형태로 표시
+                st.markdown("#### 📊 폴더별 통계")
+                num_cols = max(1, min(len(sorted_categories), 4))
+                cols = st.columns(num_cols)
+                for i, (category, files) in enumerate(sorted_categories):
+                    with cols[i % num_cols]:
+                        st.metric(
+                            f"📂 {category}",
+                            f"{len(files)}장"
+                        )
+                
+                st.markdown("---")
+                st.markdown("#### 🌳 폴더 트리 구조")
+                
+                # 폴더 트리 텍스트 표시
+                folder_tree = build_folder_tree(classifications)
+                st.code(folder_tree, language=None)
+            else:
+                st.info("분류된 이미지가 없습니다.")
         
         # 탭 2: 이미지별 폴더 분류된 결과
         with tab2:
@@ -461,7 +741,7 @@ def main():
                         for i, img_path in enumerate(images_in_category):
                             with cols[i % 4]:
                                 try:
-                                    st.image(img_path, use_container_width=True)
+                                    st.image(img_path, width='stretch')
                                     st.caption(Path(img_path).name)
                                 except Exception:
                                     st.markdown(f"🖼️ {Path(img_path).name}")
