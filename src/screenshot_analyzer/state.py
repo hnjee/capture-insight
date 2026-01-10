@@ -219,7 +219,7 @@ def override_reducer(current_value, new_value):
 
 # --- 메인 그래프 State ---
 
-class InputState(TypedDict):
+class InputState(TypedDict, total=False):
     """외부 입력 State.
     
     사용자가 그래프 실행 시 전달하는 입력.
@@ -227,6 +227,7 @@ class InputState(TypedDict):
     
     images: list[str]  # 분석할 이미지 경로들
     existing_categories: Optional[list[str]]  # 기존 카테고리 (있으면)
+    image_metadatas: Optional[dict]  # 테스트 모드: 고정 메타데이터 (있으면 ingestion 스킵)
 
 
 class ScreenshotAnalyzerState(TypedDict):
@@ -277,6 +278,7 @@ class ClassificationState(TypedDict):
     # === Classifier 관리 데이터 ===
     assignments: Annotated[dict, override_reducer]  # {image_path: folder_name}
     pending_images: list[str]  # 아직 분류 안 된 이미지들
+    refinement_requests: dict  # VLM 정밀분석 요청 {image_paths: [], questions: {}}
     refinement_results: Annotated[dict, override_reducer]  # VLM 정밀분석 결과
     
     # === 피드백 루프 데이터 ===

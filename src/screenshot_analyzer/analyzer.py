@@ -35,7 +35,6 @@ from screenshot_analyzer.utils import (
     batch_ingestion,
     execute_vision_analysis_safely,
     get_api_key_for_model,
-    think_tool,
 )
 
 # 로깅 설정
@@ -57,12 +56,14 @@ async def initialize(state: InputState, config: RunnableConfig) -> dict:
     """그래프 초기화 노드."""
     images = state.get("images", [])
     existing_categories = state.get("existing_categories", None)
+    # 테스트 모드: 입력에 이미 메타데이터가 있으면 보존
+    existing_metadatas = state.get("image_metadatas", {})
     
     return {
         "images": images,
         "existing_categories": existing_categories,
         # Phase 0: Ingestion
-        "image_metadatas": {},  # Phase 0에서 채워짐
+        "image_metadatas": existing_metadatas if existing_metadatas else {},  # 입력에 있으면 보존, 없으면 빈 dict
         # Phase 1: Classification (Strategist-Classifier)
         "vision_results": {},
         "classifications": {},
@@ -75,8 +76,17 @@ async def initialize(state: InputState, config: RunnableConfig) -> dict:
 # ============================================================
 
 async def run_ingestion(state: ScreenshotAnalyzerState, config: RunnableConfig) -> dict:
-    """모든 이미지를 경량 VLM으로 일괄 메타데이터 추출."""
+    """모든 이미지를 경량 VLM으로 일괄 메타데이터 추출.
+    
+    테스트 모드: 이미 image_metadatas가 있으면 스킵 (VLM 호출 안 함)
+    """
     images = state.get("images", [])
+    existing_metadatas = state.get("image_metadatas", {})
+    
+    # 테스트 모드: 이미 메타데이터가 있으면 스킵
+    if existing_metadatas:
+        logger.info(f"🧪 테스트 모드: 기존 메타데이터 사용 ({len(existing_metadatas)}개). VLM 호출 스킵.")
+        return {}  # 상태 변경 없음
     
     if not images:
         return {"image_metadatas": {}}
@@ -175,7 +185,7 @@ async def strategist(
     }
     
     # 도구 바인딩 + with_retry() 추가 (open_deep_research 방식)
-    tools = [think_tool, DesignFolderStructure, ReviseStructure, StrategyComplete]
+    tools = [DesignFolderStructure, ReviseStructure, StrategyComplete]
     model_with_tools = (
         configurable_model
         .bind_tools(tools)
@@ -249,22 +259,8 @@ async def strategist_tools(
     goto_classifier = False
     should_end = False
     
-    # think_tool 호출과 다른 도구 호출 분리
-    think_tool_calls = [tc for tc in most_recent_message.tool_calls if tc["name"] == "think_tool"]
-    other_tool_calls = [tc for tc in most_recent_message.tool_calls if tc["name"] != "think_tool"]
-    
-    # think_tool 처리 (사고 과정 기록)
-    for tool_call in think_tool_calls:
-        reflection = tool_call["args"].get("reflection", "")
-        result = f"Reflection recorded: {reflection}"
-        tool_messages.append(ToolMessage(
-            content=result,
-            name="think_tool",
-            tool_call_id=tool_call["id"],
-        ))
-    
-    # 다른 도구들 처리
-    for tool_call in other_tool_calls:
+    # 도구들 처리
+    for tool_call in most_recent_message.tool_calls:
         tool_name = tool_call["name"]
         tool_args = tool_call.get("args", {})
         
@@ -394,6 +390,15 @@ async def classifier(
     refinement_results = state.get("refinement_results", {})
     classify_iteration = state.get("classify_iteration", 0)
     
+    # 디버깅: refinement_results 확인
+    if refinement_results:
+        logger.info(f"📋 Classifier: refinement_results {len(refinement_results)}개 발견")
+        for img_path, result in refinement_results.items():
+            recommended = result.get("recommended_folder", "없음")
+            logger.info(f"   - {img_path}: recommended_folder={recommended}")
+    else:
+        logger.info("📋 Classifier: refinement_results 없음")
+    
     # current_folders 유효성 검사
     if not current_folders:
         logger.error("Classifier: current_folders가 비어있습니다. 기본값을 사용합니다.")
@@ -403,6 +408,10 @@ async def classifier(
     pending_metadata_list = []
     for path in pending_images[:30]:  # 한 번에 30개까지만 처리
         meta = image_metadatas.get(path, {})
+        # refinement_results에 있는 이미지는 recommended_folder 포함
+        refinement_info = refinement_results.get(path, {})
+        recommended_folder = refinement_info.get("recommended_folder", "")
+        
         pending_metadata_list.append({
             "image_path": path,  # 🔥 명확히 표시
             "description": meta.get("description", ""),
@@ -410,6 +419,7 @@ async def classifier(
             "confidence_score": meta.get("confidence_score", 0),
             "suggested_categories": meta.get("suggested_categories", []),
             "needs_visual_refinement": meta.get("needs_visual_refinement", False),
+            "vlm_recommended_folder": recommended_folder if recommended_folder else None,  # 🔥 VLM 추천 폴더
         })
     
     # 시스템 프롬프트 구성
@@ -440,7 +450,7 @@ async def classifier(
     }
     
     # 도구 바인딩 + with_retry() 추가 (open_deep_research 방식)
-    tools = [think_tool, ClassifyImages, RequestRefinement, ReportAmbiguity, ClassificationComplete]
+    tools = [ClassifyImages, RequestRefinement, ReportAmbiguity, ClassificationComplete]
     model_with_tools = (
         configurable_model
         .bind_tools(tools)
@@ -542,22 +552,8 @@ async def classifier_tools(
     goto_refiner = False
     should_end = False
     
-    # think_tool 호출과 다른 도구 호출 분리
-    think_tool_calls = [tc for tc in most_recent_message.tool_calls if tc["name"] == "think_tool"]
-    other_tool_calls = [tc for tc in most_recent_message.tool_calls if tc["name"] != "think_tool"]
-    
-    # think_tool 처리 (사고 과정 기록)
-    for tool_call in think_tool_calls:
-        reflection = tool_call["args"].get("reflection", "")
-        result = f"Reflection recorded: {reflection}"
-        tool_messages.append(ToolMessage(
-            content=result,
-            name="think_tool",
-            tool_call_id=tool_call["id"],
-        ))
-    
-    # 다른 도구들 처리
-    for tool_call in other_tool_calls:
+    # 도구들 처리
+    for tool_call in most_recent_message.tool_calls:
         tool_name = tool_call["name"]
         tool_args = tool_call.get("args", {})
         
@@ -729,6 +725,22 @@ ClassifyImages를 호출할 때는 반드시 다음 형식을 따라주세요:
     
     update_payload["messages"] = tool_messages
     
+    # 우선순위: refinement > strategist > end > classifier
+    # RequestRefinement가 호출되면 반드시 vision_refiner로 이동해야 함
+    if goto_refiner:
+        # refinement_requests를 저장하고 vision_refiner로 이동
+        logger.info(f"🔍 Vision Refiner로 이동: {update_payload.get('refinement_requests', {}).get('image_paths', [])}")
+        return Command(
+            goto="vision_refiner",
+            update={**update_payload, "current_phase": "refiner"}
+        )
+    
+    if goto_strategist:
+        return Command(
+            goto="strategist",
+            update={**update_payload, "current_phase": "strategist"}
+        )
+    
     if should_end:
         # 최종 결과 반환
         final_assignments = {**state.get("assignments", {}), **update_payload.get("assignments", {})}
@@ -742,18 +754,6 @@ ClassifyImages를 호출할 때는 반드시 다음 형식을 따라주세요:
                 "categories": current_folders,
                 "vision_results": state.get("refinement_results", {}),
             }
-        )
-    
-    if goto_refiner:
-        return Command(
-            goto="vision_refiner",
-            update={**update_payload, "current_phase": "refiner"}
-        )
-    
-    if goto_strategist:
-        return Command(
-            goto="strategist",
-            update={**update_payload, "current_phase": "strategist"}
         )
     
     return Command(
@@ -774,11 +774,15 @@ async def vision_refiner(
     configuration = Configuration.from_runnable_config(config)
     
     refinement_requests = state.get("refinement_requests", {})
-    image_paths = refinement_requests.get("image_paths", [])
-    questions = refinement_requests.get("questions", {})
+    image_paths = refinement_requests.get("image_paths", []) if refinement_requests else []
+    questions = refinement_requests.get("questions", {}) if refinement_requests else {}
+    
+    logger.info(f"🔍 Vision Refiner 시작: refinement_requests={refinement_requests}")
+    logger.info(f"   이미지 경로: {image_paths} (총 {len(image_paths)}장)")
     
     if not image_paths:
         # 요청이 없으면 바로 Classifier로 복귀
+        logger.warning("⚠️ Vision Refiner: 분석 요청된 이미지가 없습니다.")
         return Command(
             goto="classifier",
             update={"current_phase": "classifier"}
@@ -790,11 +794,14 @@ async def vision_refiner(
     
     async def process_with_semaphore(img_path: str) -> tuple[str, dict]:
         async with semaphore:
+            logger.info(f"🖼️ VLM 분석 시작: {img_path}")
             # Rate Limit 방지를 위한 약간의 딜레이 (with_retry가 대부분 처리)
             await asyncio.sleep(0.5)
             
             # 안전한 실행 함수 사용 (에러 발생 시에도 계속 진행)
             result = await execute_vision_analysis_safely(img_path, config)
+            
+            logger.info(f"✅ VLM 분석 완료: {img_path} → {result.suggested_category} (신뢰도: {result.confidence})")
             
             return (img_path, {
                 "analysis": result.model_dump(),
@@ -803,6 +810,7 @@ async def vision_refiner(
             })
     
     # 병렬 처리 (동시성 제한 적용, 에러는 안전한 실행 함수에서 처리)
+    logger.info(f"🚀 {len(image_paths)}장의 이미지를 VLM으로 분석 시작...")
     tasks = [process_with_semaphore(img_path) for img_path in image_paths]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
@@ -811,21 +819,45 @@ async def vision_refiner(
     for result in results:
         if isinstance(result, Exception):
             # 예상치 못한 에러 (실행 함수에서 잡지 못한 경우)
-            logger.error(f"Vision refinement 예상치 못한 에러: {result}")
+            logger.error(f"❌ Vision refinement 예상치 못한 에러: {result}")
             # 에러 정보를 결과에 포함 (부분 성공 허용)
             continue
         img_path, result_dict = result
         new_results[img_path] = result_dict
     
+    logger.info(f"📊 Vision Refiner 완료: {len(new_results)}/{len(image_paths)}장 분석 성공")
+    
     # 기존 결과에 병합
     current_results = state.get("refinement_results", {})
     merged_results = {**current_results, **new_results}
+    
+    logger.info(f"💾 refinement_results 저장: 총 {len(merged_results)}개 결과")
+    
+    # refinement_results에 recommended_folder가 있는 이미지들을 자동으로 분류
+    auto_assignments = {}
+    current_folders = state.get("current_folders", [])
+    pending_images = state.get("pending_images", [])
+    
+    for img_path, result_dict in new_results.items():
+        recommended_folder = result_dict.get("recommended_folder", "")
+        if recommended_folder and recommended_folder in current_folders:
+            auto_assignments[img_path] = recommended_folder
+            logger.info(f"✅ Vision Refiner 결과로 자동 분류: {img_path} → {recommended_folder}")
+    
+    # 자동 분류된 이미지들을 pending에서 제거
+    new_pending = [p for p in pending_images if p not in auto_assignments]
+    
+    # 기존 assignments에 병합
+    current_assignments = state.get("assignments", {})
+    merged_assignments = {**current_assignments, **auto_assignments}
     
     return Command(
         goto="classifier",
         update={
             "refinement_results": merged_results,
             "refinement_requests": {},  # 요청 처리 완료
+            "assignments": merged_assignments,  # 자동 분류 결과 반영
+            "pending_images": new_pending,  # pending에서 제거
             "current_phase": "classifier",
         }
     )

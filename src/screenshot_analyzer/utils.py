@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
@@ -442,26 +442,6 @@ def parse_json_response(content: str) -> dict:
     except json.JSONDecodeError:
         logger.warning(f"JSON 파싱 실패: {content[:100]}...")
         return {}
-
-
-# ============================================================
-# Agent 도구 (think_tool)
-# ============================================================
-
-@tool
-def think_tool(reflection: str) -> str:
-    """전략적 사고 기록 도구.
-    
-    에이전트가 행동하기 전에 계획을 세우거나
-    행동 후 결과를 분석할 때 사용합니다.
-    
-    Args:
-        reflection: 현재 상황에 대한 생각, 계획, 또는 분석
-        
-    Returns:
-        기록 확인 메시지
-    """
-    return f"Reflection recorded: {reflection}"
 
 
 # ============================================================
