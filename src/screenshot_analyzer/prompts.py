@@ -8,6 +8,8 @@
   - Vision Refiner: 선택적 VLM 정밀분석
 """
 
+import json
+
 # ============================================================
 # Phase 0: Ingestion 프롬프트 (경량 VLM용)
 # ============================================================
@@ -118,17 +120,7 @@ Ingestion 단계에서 추출된 메타데이터(description, ocr_text 등)를 �
 
 ## 사용 가능한 도구
 
-### 1. **think_tool** (항상 먼저 사용)
-전략적 사고 기록 도구. 행동하기 전에 계획을 세우거나 결과를 분석할 때 사용합니다.
-
-**예시:**
-```json
-{{
-  "reflection": "메타데이터를 보니 패션 관련 이미지 7개, 건강식품 3개가 보입니다. '쇼핑몰', '영상' 등 플랫폼이 아닌 '패션', '건강' 등 내용 중심으로 분류하는 것이 적절합니다."
-}}
-```
-
-### 2. **DesignFolderStructure** (최초 설계)
+### 1. **DesignFolderStructure** (최초 설계)
 폴더 구조를 처음 설계할 때 사용합니다.
 
 **예시:**
@@ -145,7 +137,7 @@ Ingestion 단계에서 추출된 메타데이터(description, ocr_text 등)를 �
 }}
 ```
 
-### 3. **ReviseStructure** (피드백 반영 수정)
+### 2. **ReviseStructure** (피드백 반영 수정)
 Classifier로부터 피드백을 받아 폴더 구조를 수정할 때 사용합니다.
 
 **예시:**
@@ -161,7 +153,7 @@ Classifier로부터 피드백을 받아 폴더 구조를 수정할 때 사용합
 ```
 **주의**: `changes`는 `List[Dict[str, str]]` 형식이어야 합니다. 각 딕셔너리는 `action` ('merge'|'split'|'rename'), `from`, `to` 키를 포함해야 합니다.
 
-### 4. **StrategyComplete** (설계 완료)
+### 3. **StrategyComplete** (설계 완료)
 폴더 구조 설계가 완료되어 Classifier로 넘어갈 준비가 되었을 때 호출합니다.
 
 **예시:**
@@ -173,7 +165,7 @@ Classifier로부터 피드백을 받아 폴더 구조를 수정할 때 사용합
 ```
 
 ## 작업 흐름
-1. **think_tool**로 메타데이터 분석 및 내용 중심 폴더 계획
+1. 메타데이터를 분석하여 내용 중심 폴더 계획을 세우세요 (각 도구의 `reasoning` 필드에 기록)
 2. 피드백이 없으면 **DesignFolderStructure**, 있으면 **ReviseStructure**
 3. 구조가 확정되면 **StrategyComplete**
 
@@ -182,7 +174,7 @@ Classifier로부터 피드백을 받아 폴더 구조를 수정할 때 사용합
 
 기존 카테고리가 있으면 참고하되, 더 나은 구조가 있다면 재설계하세요.
 
-**CRITICAL: 항상 think_tool을 먼저 호출하여 분석 및 계획을 수립한 후, 다른 도구를 호출하세요.**
+**중요**: 각 도구 호출 시 `reasoning` 필드에 사고 과정과 판단 근거를 명확히 기록하세요.
 """
 
 STRATEGIST_HUMAN_PROMPT = """현재 상황을 분석하고 폴더 구조를 설계해주세요.
@@ -204,162 +196,79 @@ STRATEGIST_HUMAN_PROMPT = """현재 상황을 분석하고 폴더 구조를 설�
 # ============================================================
 # Phase 1: Classifier 프롬프트
 # ============================================================
-
-CLASSIFIER_SYSTEM_PROMPT = """당신은 이미지를 적절한 폴더에 분류하는 **분류자(Classifier)**입니다.
-
-## 당신의 역할
-Strategist가 설계한 폴더 구조에 따라 각 이미지를 적절한 폴더에 배정합니다.
-**이미지를 직접 보지 않고 메타데이터(description, ocr_text)만으로 판단합니다.**
+CLASSIFIER_SYSTEM_PROMPT = """당신은 이미지를 폴더에 분류하는 **Classifier**입니다.
 
 ## 현재 상태
-- 총 이미지 수: {total_images}장
-- 분류 완료: {classified_count}장
-- 미분류: {pending_count}장
-- 반복 횟수: {classify_iteration}/{max_iterations}
+- 총 이미지: {total_images}장 | 완료: {classified_count}장 | 미분류: {pending_count}장
+- 반복: {classify_iteration}/{max_iterations}
 
 ## 폴더 구조
 {folders}
 
-## 폴더별 분류 기준
 {folder_descriptions}
+
+## 분류 기준 및 원칙
+
+### 1. 메타데이터 기반 판단
+- **description**: 이미지의 전체적인 주제 파악
+- **ocr_text**: 핵심 키워드 (상호명, 상품명, 가격 등) 활용
+- **confidence_score**: 0.7 이상이면 충분, 미만이면 추가 분석 고려
+
+### 2. VLM 정밀분석 결과 활용 (있는 경우)
+- `primary_subject`: 이미지의 **실제 핵심 내용** (플랫폼 아님!)
+- `content_description`: 구체적인 상황/맥락
+- `key_text`: 노이즈 제거된 핵심 텍스트
+- `suggested_categories`: **참고용 힌트**, 폴더 구조와 매칭은 당신이 판단
+
+### 3. SNS 스크린샷 처리 원칙
+**중요**: 플랫폼이 아닌 콘텐츠 내용으로 분류!
+- 나쁜 예: "인스타그램 릴스" → "SNS" 폴더, "유튜브 쇼츠" → "엔터테인먼트" 폴더
+- 좋은 예: primary_subject="고양이" → "동물" 폴더, primary_subject="운동 루틴" → "건강" 폴더
+
+### 4. 확신도 기준
+- **≥ 0.7**: 바로 `ClassifyImages` 호출
+- **0.4~0.7**: 정보 부족 시 `RequestRefinement` 고려
+- **< 0.4** 또는 **needs_visual_refinement=true**: `RequestRefinement` 우선
+
+### 5. 애매한 케이스 처리
+- 여러 폴더 해당 가능: 가장 구체적인 폴더 선택, 예: "나이키 운동화" → "패션" vs "쇼핑" → "패션" (더 구체적)
+- 어떤 폴더에도 안 맞음: `ReportAmbiguity`로 새 폴더 제안
 
 ## 사용 가능한 도구
 
-### 1. **think_tool** (항상 먼저 사용)
-전략적 사고 기록 도구. 각 이미지 분류 전략을 세우거나 결과를 분석할 때 사용합니다.
-
-**예시:**
+### 1. ClassifyImages
+확신 있는 이미지 분류 (assignments 비어있으면 안 됨!)
 ```json
 {{
-  "reflection": "메타데이터를 보니 대부분 패션 관련 이미지입니다. '패션' 폴더에 분류하는 것이 적절합니다."
+  "assignments": {{"경로1": "폴더1", "경로2": "폴더2"}},
+  "confidence_scores": {{"경로1": 0.95, "경로2": 0.88}},
+  "reasoning": "이미지1: OCR='비타민D' + description='영양제' → 건강 폴더"
 }}
 ```
 
-### 2. **ClassifyImages** (확신 있는 이미지 분류)
-확신도 0.7 이상인 이미지들을 폴더에 배정합니다.
+### 2. RequestRefinement
+VLM 정밀분석 요청 (텍스트만으로 판단 불가 시)
 
-**CRITICAL**: assignments는 반드시 {{이미지경로: 폴더명}} 형태의 딕셔너리여야 합니다!
+### 3. ReportAmbiguity
+폴더 구조 문제 피드백 (겹침, 누락, 모호함)
 
-**예시:**
-```json
-{{
-  "assignments": {{
-    "examples/screenshots/IMG_5779.PNG": "건강",
-    "examples/screenshots/IMG_6677.PNG": "패션",
-    "examples/screenshots/IMG_7943.PNG": "쇼핑"
-  }},
-  "confidence_scores": {{
-    "examples/screenshots/IMG_5779.PNG": 0.95,
-    "examples/screenshots/IMG_6677.PNG": 0.88,
-    "examples/screenshots/IMG_7943.PNG": 0.92
-  }},
-  "reasoning": "IMG_5779는 영양제 상품으로 건강 폴더에 분류. IMG_6677은 패션 쇼츠로 패션 폴더에 분류."
-}}
-```
-
-**⚠️ 중요**: 
-- assignments는 절대 비어있으면 안 됩니다!
-- 이미지 경로는 위의 "분류 대상 이미지 메타데이터"에 나온 경로를 정확히 사용하세요
-- 폴더명은 위의 "폴더 구조" 목록에 있는 것만 사용하세요
-
-### 3. **RequestRefinement** (VLM 정밀분석 요청)
-텍스트만으로는 판단이 불가능할 때 VLM 정밀분석을 요청합니다.
-
-**예시:**
-```json
-{{
-  "image_paths": ["/path/to/ambiguous.jpg"],
-  "questions": {{
-    "/path/to/ambiguous.jpg": "이 이미지의 주요 내용은 무엇인가요? 패션인지 건강인지 구분이 어렵습니다."
-  }},
-  "reason": "텍스트가 거의 없고 이미지만으로는 카테고리 판단이 어려움"
-}}
-```
-
-### 4. **ReportAmbiguity** (폴더 구조 피드백)
-폴더 구조에 문제를 발견했을 때 Strategist에게 피드백합니다.
-
-**예시:**
-```json
-{{
-  "issue_type": "overlap",
-  "affected_folders": ["패션", "쇼핑"],
-  "affected_images": ["/path/to/image1.jpg"],
-  "suggestion": "패션과 쇼핑 폴더의 기준이 겹칩니다. 패션 폴더로 통합하는 것을 제안합니다."
-}}
-```
-
-### 5. **ClassificationComplete** (분류 완료)
-모든 이미지 분류가 완료되었을 때 호출합니다.
-
-**예시:**
-```json
-{{
-  "summary": "총 20장 중 20장 분류 완료. 패션 8장, 건강 7장, 음식 5장",
-  "total_classified": 20,
-  "categories_found": ["패션", "건강", "음식"]
-}}
-```
-
-## 판단 기준
-1. **먼저 `think_tool`로 각 이미지 분류 전략을 세우세요**
-2. **확신도 0.7 이상**: `ClassifyImages`로 바로 분류
-3. **확신도 0.4~0.7**: 추가 정보 필요 → `RequestRefinement` 고려
-4. **폴더 구조 문제**: 겹침/누락 발견 → `ReportAmbiguity`
-5. **모두 분류 완료**: `ClassificationComplete`
-
-## 주의사항
-- needs_visual_refinement=true인 이미지는 `RequestRefinement`로 VLM 분석 요청
-- 여러 폴더에 해당할 것 같으면 가장 적합한 하나를 선택하거나 `ReportAmbiguity`
-- 어떤 폴더에도 맞지 않으면 `ReportAmbiguity`로 새 폴더 제안
-- **ClassifyImages 호출 시 assignments는 절대 비어있으면 안 됩니다!**
-
-**CRITICAL: 항상 think_tool을 먼저 호출하여 분석 및 계획을 수립한 후, 다른 도구를 호출하세요.**
+### 4. ClassificationComplete
+모든 분류 완료 선언
 """
 
-CLASSIFIER_HUMAN_PROMPT = """현재 상황을 분석하고 이미지들을 분류해주세요.
+CLASSIFIER_HUMAN_PROMPT = """현재 이미지들을 분류해주세요.
 
-## 사용 가능한 폴더
-{folders}
-
-## 각 폴더 설명
-{folder_descriptions}
-
-## 분류 대상 이미지 메타데이터
+## 분류 대상 메타데이터
 {pending_metadata}
 
-## VLM 정밀분석 결과 (있는 경우)
+## VLM 정밀분석 결과
 {refinement_results}
 
 ## 현재까지 분류 결과
 {current_assignments}
 
-## 중요: ClassifyImages 호출 형식
-
-**ClassifyImages를 호출할 때는 반드시 다음 형식을 따르세요:**
-```json
-{{
-    "assignments": {{
-        "이미지경로1": "폴더명1",
-        "이미지경로2": "폴더명2",
-        "이미지경로3": "폴더명3"
-    }},
-    "confidence_scores": {{
-        "이미지경로1": 0.95,
-        "이미지경로2": 0.88,
-        "이미지경로3": 0.92
-    }},
-    "reasoning": "이미지경로1은 '메가트루 파워 영양제'로 OCR에 '비타민'이 명확하므로 건강 폴더에 분류. 이미지경로2는 '화이트 롱스커트 쇼츠 영상'으로 패션 폴더에 분류..."
-}}
-```
-
-**CRITICAL**: 
-- assignments는 반드시 실제 이미지 경로와 폴더명을 포함해야 합니다
-- 이미지 경로는 위의 "분류 대상 이미지 메타데이터"에 나온 "image_path"를 정확히 사용하세요
-- 폴더명은 위의 "사용 가능한 폴더" 목록에 있는 것만 사용하세요
-- assignments가 비어있으면 안 됩니다!
-
-위 정보를 바탕으로 적절한 도구를 호출하세요."""
+위 정보를 바탕으로 시스템 프롬프트의 원칙에 따라 적절한 도구를 호출하세요.
+"""
 
 
 # ============================================================
@@ -402,27 +311,51 @@ JSON 형식으로 응답하세요:
 # ============================================================
 # Vision 분석 프롬프트 (Vision Refiner용)
 # ============================================================
+VISION_ANALYSIS_PROMPT = """당신은 스크린샷의 **핵심 주제**를 파악하는 전문가입니다.
+UI 요소나 배경은 무시하고 **사용자가 실제로 캡처하려던 대상**에 집중하세요.
 
-VISION_ANALYSIS_PROMPT = """이 스크린샷을 상세히 분석해주세요.
+## 분석 우선순위
+1. **중앙 피사체 우선**: 이미지 중심부의 주요 객체/내용
+2. **노이즈 필터링**: SNS UI(좋아요, 댓글, 공유), 광고, 메뉴바 무시
+3. **의미있는 텍스트만**: 제목, 본문, 상품명, 가격 등 핵심 정보 (UI 레이블 제외)
+4. **내용 vs 플랫폼 구분**: "인스타그램의 고양이" → "고양이"
 
-## 분석 항목
-1. **주요 객체/요소**: 이미지에서 보이는 주요 요소들을 나열하세요
-2. **장면/컨텍스트**: 이 스크린샷이 어떤 상황인지 설명하세요
-3. **텍스트 추출**: 이미지에 보이는 모든 텍스트를 추출하세요 (OCR)
-4. **카테고리 추론**: 이 스크린샷의 카테고리를 추론하세요
-
-## 카테고리 예시:  "패션", "건강", "음식", "여행", "금융", "뉴스", "인사이트", "엔터테인먼트"
-## 출력 형식
-JSON 형식으로 응답하세요:
+## 출력 형식 (JSON)
 ```json
 {{
-    "objects": ["객체1", "객체2", ...],
-    "scene": "장면 설명",
-    "extracted_text": "추출된 텍스트",
-    "suggested_category": "카테고리",
-    "confidence": 0.95
+    "primary_subject": "핵심 피사체",
+    "content_description": "실질 내용 설명 (플랫폼 아닌 내용 중심)",
+    "key_text": "의미있는 핵심 텍스트 (UI 제외)",
+    "visual_details": "피사체의 시각적 특징 (색상, 형태, 분위기)",
+    "suggested_categories": ["추천 카테고리1", "카테고리2"],
+    "additional_context": "기타 참고할 만한 정보"
 }}
 ```
+
+## 예시
+
+**좋은 예 - SNS 고양이 사진:**
+```json
+{{
+    "primary_subject": "흰색 고양이",
+    "content_description": "햇빛 아래 누워있는 흰색 장모 고양이",
+    "key_text": "우리집 냥이",
+    "visual_details": "흰색 털, 파란 눈, 실내 창가, 자연광",
+    "suggested_categories": ["동물", "고양이", "반려동물"],
+    "additional_context": "SNS 게시물 형식이지만 핵심은 고양이 사진"
+}}
+```
+
+**나쁜 예:**
+```json
+{{
+    "primary_subject": "인스타그램 게시물",
+    "suggested_categories": ["SNS", "엔터테인먼트"]
+}}
+```
+
+**주의:**
+- 플랫폼이 아닌 **실제 내용** 중심 분석
+- UI 텍스트("좋아요", "팔로우") 무시
+- 핵심 피사체와 맥락에 집중
 """
-
-
