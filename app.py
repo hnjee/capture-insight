@@ -298,7 +298,7 @@ def main():
     FIXED_METADATA = {
         "examples/screenshots/IMG_5563.PNG": {
             "image_path": "examples/screenshots/IMG_5563.PNG",
-            "description": "자는 고양이 사진",
+            "primary_subject": "자는 고양이 사진",
             "ocr_text": "수연여사, 2025. 9. 17. 오후 1:43",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -311,7 +311,7 @@ def main():
         },
         "examples/screenshots/IMG_5202.PNG":{
             "image_path": "examples/screenshots/IMG_5202.PNG",
-            "description": "오렌지색 인형과 함께 자고 있는 고양이 사진",
+            "primary_subject": "오렌지색 인형과 함께 자고 있는 고양이 사진",
             "ocr_text": "수연여사, 2025. 3. 18. 오전 10:30",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -324,7 +324,7 @@ def main():
         },
         "examples/screenshots/IMG_5779.PNG": {
             "image_path": "examples/screenshots/IMG_5779.PNG",
-            "description": "메가트루 파워 비타민 제품 이미지",
+            "primary_subject": "메가트루 파워 비타민 제품 이미지",
             "ocr_text": "메가트루 파워, 60정, 비타민 100mg",
             "confidence_score": 0.9,
             "needs_visual_refinement": False,
@@ -337,7 +337,7 @@ def main():
         },
         "examples/screenshots/IMG_5780.PNG": {
             "image_path": "examples/screenshots/IMG_5780.PNG",
-            "description": "비타민 B 제품 상세 이미지",
+            "primary_subject": "비타민 B 제품 상세 이미지",
             "ocr_text": "비맥스 메타비, 60정, GC녹십자, 2025-03-27",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -350,7 +350,7 @@ def main():
         },
         "examples/screenshots/IMG_5888.PNG": {
             "image_path": "examples/screenshots/IMG_5888.PNG",
-            "description": "NOW FOODS 오메가-3 피쉬 오일 보충제",
+            "primary_subject": "NOW FOODS 오메가-3 피쉬 오일 보충제",
             "ocr_text": "Omega-3, Supplement Facts, 7,860원",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -363,7 +363,7 @@ def main():
         },
         "examples/screenshots/IMG_6443.PNG": {
             "image_path": "examples/screenshots/IMG_6443.PNG",
-            "description": "인생에 대한 성찰과 성장에 관한 메시지",
+            "primary_subject": "인생에 대한 성찰과 성장에 관한 메시지",
             "ocr_text": "Life can be heavy, 인생이 무겁게 느껴질 수 있습니다, catch and release",
             "confidence_score": 0.88,
             "needs_visual_refinement": False,
@@ -376,7 +376,7 @@ def main():
         },
         "examples/screenshots/IMG_6686.PNG": {
             "image_path": "examples/screenshots/IMG_6686.PNG",
-            "description": "패션 스타일링 비디오, 출근 준비에 대한 내용",
+            "primary_subject": "패션 스타일링 비디오, 출근 준비에 대한 내용",
             "ocr_text": "출근 준비 5분 컷, 3가지 조합만 외우세요, 여름, 화이트 롱스커트",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -389,7 +389,7 @@ def main():
         },
         "examples/screenshots/IMG_7619.PNG": {
             "image_path": "examples/screenshots/IMG_7619.PNG",
-            "description": "고양이가 침대에 누워있는 모습",
+            "primary_subject": "고양이가 침대에 누워있는 모습",
             "ocr_text": "1.4만, 5,547, Tears - Sabrina Carpenter, @UNDER_WORLD_b1",
             "confidence_score": 0.75,
             "needs_visual_refinement": True,
@@ -402,7 +402,7 @@ def main():
         },
         "examples/screenshots/IMG_7943.PNG": {
             "image_path": "examples/screenshots/IMG_7943.PNG",
-            "description": "ZIGZAG 의류 쇼핑 앱 페이지",
+            "primary_subject": "ZIGZAG 의류 쇼핑 앱 페이지",
             "ocr_text": "ZIGZAG, 겨울을 준비하는 가이드건, 최대 69,000원 쿠폰팩",
             "confidence_score": 0.88,
             "needs_visual_refinement": False,
@@ -415,7 +415,7 @@ def main():
         },
         "examples/screenshots/IMG_9335.PNG": {
             "image_path": "examples/screenshots/IMG_9335.PNG",
-            "description": "안락한 침실 사진, 편안한 휴식 공간을 표현",
+            "primary_subject": "안락한 침실 사진, 편안한 휴식 공간을 표현",
             "ocr_text": "a safe place to rest",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -428,7 +428,7 @@ def main():
         },
         "examples/screenshots/IMG_9336.PNG": {
             "image_path": "examples/screenshots/IMG_9336.PNG",
-            "description": "아늑한 실내 공간의 사진, 조명과 장식이 잘 꾸며져 있음",
+            "primary_subject": "아늑한 실내 공간의 사진, 조명과 장식이 잘 꾸며져 있음",
             "ocr_text": "a safe place to rest, happy Sunday",
             "confidence_score": 0.75,
             "needs_visual_refinement": False,
@@ -441,7 +441,7 @@ def main():
         },
         "examples/screenshots/IMG_9340.PNG": {
             "image_path": "examples/screenshots/IMG_9340.PNG",
-            "description": "색감 넘치는 인테리어 사진",
+            "primary_subject": "색감 넘치는 인테리어 사진",
             "ocr_text": "MORE SPAGHETTI, LESS UPSETTI, SUNNY SIDE UP",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -454,7 +454,7 @@ def main():
         },
         "examples/screenshots/IMG_9604.PNG": {
             "image_path": "examples/screenshots/IMG_9604.PNG",
-            "description": "마리끌레르 겨울 리드 상품 페이지",
+            "primary_subject": "마리끌레르 겨울 리드 상품 페이지",
             "ocr_text": "체크패턴, 129,000원, 69,000 won, 마리끌레르 연말 감사전",
             "confidence_score": 0.9,
             "needs_visual_refinement": False,
@@ -467,7 +467,7 @@ def main():
         },
         "examples/screenshots/IMG_9668.jpg": {
             "image_path": "examples/screenshots/IMG_9668.jpg",
-            "description": "책 페이지의 일부 텍스트",
+            "primary_subject": "책 페이지의 일부 텍스트",
             "ocr_text": "진정성, 지니어스 코드, Ozan Varol, 35세, 25세",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -480,7 +480,7 @@ def main():
         },
         "examples/screenshots/IMG_9691.PNG": {
             "image_path": "examples/screenshots/IMG_9691.PNG",
-            "description": "생명에 대한 메시지를 담은 글",
+            "primary_subject": "생명에 대한 메시지를 담은 글",
             "ocr_text": "이여령 교수, 메시지는 단순했다, 삶은 아까지 않을 때, 배움과 말, '어디에 마음을 쓰냐'",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -493,7 +493,7 @@ def main():
         },
         "examples/screenshots/IMG_9891.PNG": {
             "image_path": "examples/screenshots/IMG_9891.PNG",
-            "description": "커피 데이트 준비 영상",
+            "primary_subject": "커피 데이트 준비 영상",
             "ocr_text": "Get ready with me for a coffee date, Olivia Dean, Man I Need",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,
@@ -506,7 +506,7 @@ def main():
         },
         "examples/screenshots/IMG_9903.PNG": {
             "image_path": "examples/screenshots/IMG_9903.PNG",
-            "description": "패션 스타일 영감 사진, 레이첼 그린 의상 영감",
+            "primary_subject": "패션 스타일 영감 사진, 레이첼 그린 의상 영감",
             "ocr_text": "Rachel green outfit inspo",
             "confidence_score": 0.85,
             "needs_visual_refinement": False,

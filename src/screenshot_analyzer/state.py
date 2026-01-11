@@ -31,7 +31,7 @@ class IngestionMetadata(BaseModel):
     """
     
     image_path: str = Field(description="이미지 파일 경로")
-    description: str = Field(description="이미지에 대한 한 문장 요약")
+    primary_subject: str = Field(description="이미지에 대한 한 문장 요약 (핵심 피사체/주제)")
     ocr_text: str = Field(description="이미지에서 추출된 주요 텍스트 (분류 힌트)")
     confidence_score: float = Field(
         description="Ingestion 분석 신뢰도 (0.0~1.0)",
@@ -57,14 +57,17 @@ class RefinementResult(BaseModel):
     
     needs_visual_refinement=True인 이미지에 대해서만
     선택적으로 생성되는 상세 분석 결과.
+    
+    프롬프트 응답 형식과 일치하도록 설계됨.
     """
     
     image_path: str = Field(description="분석한 이미지 경로")
-    objects: list[str] = Field(description="발견된 주요 객체들")
-    scene: str = Field(description="이미지의 장면/컨텍스트")
-    extracted_text: str = Field(description="추출된 텍스트 (OCR)")
-    suggested_category: str = Field(description="추천 카테고리")
-    confidence: float = Field(description="신뢰도 (0.0~1.0)", ge=0.0, le=1.0)
+    primary_subject: str = Field(description="핵심 피사체 (세밀하게)")
+    content_description: str = Field(description="구체적인 맥락 설명")
+    key_text: str = Field(description="핵심 텍스트")
+    visual_details: str = Field(description="시각적 특징 상세")
+    suggested_categories: List[str] = Field(description="추천 카테고리 리스트")
+    additional_context: str = Field(default="", description="1차 분석에서 놓친 중요 정보")
 
 
 # ============================================================
