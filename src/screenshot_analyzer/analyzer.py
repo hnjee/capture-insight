@@ -163,19 +163,18 @@ async def strategist(
     
     # 시스템 프롬프트 구성
     system_prompt = STRATEGIST_SYSTEM_PROMPT.format(
-        total_images=len(images),
         strategy_iteration=strategy_iteration,
         max_iterations=configuration.max_analysis_iterations,
-        has_feedback="있음" if classification_feedback else "없음",
-        existing_categories=", ".join(existing_categories) if existing_categories else "없음",
     )
     
     # Human 프롬프트 구성
     human_prompt = STRATEGIST_HUMAN_PROMPT.format(
+        strategy_iteration=strategy_iteration,
+        max_iterations=configuration.max_analysis_iterations,
+        current_folders_status=json.dumps(current_folders, ensure_ascii=False, indent=2) if current_folders else "없음",
         metadata_summary=_summarize_metadata(image_metadatas),
         suggested_categories_distribution=_get_suggested_categories_distribution(image_metadatas),
         classification_feedback="\n".join(classification_feedback) if classification_feedback else "없음",
-        current_folders=json.dumps(current_folders, ensure_ascii=False, indent=2) if current_folders else "없음",
     )
     
     # 모델 설정
@@ -423,18 +422,17 @@ async def classifier(
         })
     
     # 시스템 프롬프트 구성
-    system_prompt = CLASSIFIER_SYSTEM_PROMPT.format(
-        total_images=len(images),
+    system_prompt = CLASSIFIER_SYSTEM_PROMPT
+    
+    # Human 프롬프트 구성
+    human_prompt = CLASSIFIER_HUMAN_PROMPT.format(
         classified_count=len(assignments),
+        total_images=len(images),
         pending_count=len(pending_images),
         classify_iteration=classify_iteration,
         max_iterations=configuration.max_analysis_iterations,
         folders=json.dumps(current_folders, ensure_ascii=False, indent=2),
         folder_descriptions=json.dumps(folder_descriptions, ensure_ascii=False, indent=2),
-    )
-    
-    # Human 프롬프트 구성
-    human_prompt = CLASSIFIER_HUMAN_PROMPT.format(
         pending_metadata=json.dumps(pending_metadata_list, ensure_ascii=False, indent=2),
         refinement_results=json.dumps(refinement_results, ensure_ascii=False, indent=2) if refinement_results else "없음",
         current_assignments=json.dumps(assignments, ensure_ascii=False, indent=2) if assignments else "없음",
