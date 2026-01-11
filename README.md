@@ -5,7 +5,6 @@
 LangGraph 기반의 멀티 에이전트 시스템으로, 스크린샷 이미지를 분석하여 카테고리를 자동 분류하고, 웹 검색을 통해 카테고리별 인사이트를 수집한 뒤 종합 보고서를 생성합니다.
 
 
-**🌐 Demo: [https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app](https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app)**
 
 ---
 
