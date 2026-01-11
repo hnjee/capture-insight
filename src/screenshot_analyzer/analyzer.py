@@ -392,9 +392,6 @@ async def classifier(
     # 디버깅: refinement_results 확인
     if refinement_results:
         logger.info(f"📋 Classifier: refinement_results {len(refinement_results)}개 발견")
-        for img_path, result in refinement_results.items():
-            recommended = result.get("recommended_folder", "없음")
-            logger.info(f"   - {img_path}: recommended_folder={recommended}")
     else:
         logger.info("📋 Classifier: refinement_results 없음")
     
@@ -407,9 +404,6 @@ async def classifier(
     pending_metadata_list = []
     for path in pending_images[:30]:  # 한 번에 30개까지만 처리
         meta = image_metadatas.get(path, {})
-        # refinement_results에 있는 이미지는 recommended_folder 포함
-        refinement_info = refinement_results.get(path, {})
-        recommended_folder = refinement_info.get("recommended_folder", "")
         
         pending_metadata_list.append({
             "image_path": path,  # 🔥 명확히 표시
@@ -418,7 +412,6 @@ async def classifier(
             "confidence_score": meta.get("confidence_score", 0),
             "suggested_categories": meta.get("suggested_categories", []),
             "needs_visual_refinement": meta.get("needs_visual_refinement", False),
-            "vlm_recommended_folder": recommended_folder if recommended_folder else None,  # 🔥 VLM 추천 폴더
         })
     
     # 시스템 프롬프트 구성
@@ -562,6 +555,16 @@ async def classifier_tools(
             new_assignments = tool_args.get("assignments", {})
             confidence_scores = tool_args.get("confidence_scores", {})
             reasoning = tool_args.get("reasoning", "")
+            
+            # assignments 타입 검사: 딕셔너리가 아닌 경우 처리
+            if not isinstance(new_assignments, dict):
+                logger.error(f"ClassifyImages의 assignments가 딕셔너리가 아닙니다. 타입: {type(new_assignments)}, 값: {new_assignments}")
+                tool_messages.append(ToolMessage(
+                    content=f"에러: assignments는 딕셔너리 형식이어야 합니다. 현재 타입: {type(new_assignments).__name__}. {{이미지경로: 폴더명}} 형태의 딕셔너리를 제공해주세요.",
+                    name=tool_name,
+                    tool_call_id=tool_call["id"],
+                ))
+                continue  # 다음 tool_call로
             
             # assignments 유효성 검사: 빈 딕셔너리는 무시
             if not new_assignments:
@@ -767,9 +770,8 @@ async def vision_refiner(
             suggested_category = result.suggested_categories[0] if result.suggested_categories else "기타"
             logger.info(f"✅ VLM 분석 완료: {img_path} → {suggested_category}")
             
-            # 프롬프트 형식과 일치하도록 result를 그대로 사용하고, recommended_folder만 추가
+            # 프롬프트 형식과 일치하도록 result를 그대로 사용
             result_dict = result.model_dump()
-            result_dict["recommended_folder"] = suggested_category
             
             return (img_path, result_dict)
     
