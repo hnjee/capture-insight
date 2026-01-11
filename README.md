@@ -1,300 +1,185 @@
 # 📸 Capture Insight
 
-> 스크린샷을 자동으로 분류하고 인사이트를 제공하는 AI 에이전트
+> 스크린샷 이미지를 자동으로 분류하고 정리하는 멀티 에이전트 시스템 
 
-LangGraph 기반의 멀티 에이전트 시스템으로, 스크린샷 이미지를 분석하여 카테고리를 자동 분류하고, 웹 검색을 통해 카테고리별 인사이트를 수집한 뒤 종합 보고서를 생성합니다.
-
-
+**Capture Insight**는 LangGraph 기반의 멀티 에이전트 시스템으로 스크린샷을 자동 분류하는 AI 솔루션입니다. **비용 최적화(Cost-efficiency)**와 **분류 정확도** 사이의 균형을 에이전틱 디자인 패턴으로 해결했으며, Workflow와 Agent를 조합하여 안정성과 유연성을 확보하고자 했습니다. 
 
 ---
 
-## 🎯 프로젝트 목표
-
-### 해결하고자 하는 문제
-스마트폰에 쌓여있는 수많은 스크린샷들을 자동으로 정리하고, 각 카테고리에 대한 유용한 정보를 제공받고 싶었습니다.
-
-### 왜 LangGraph인가?
-- **복잡한 워크플로우**: 이미지 분석 → 분류 → 검색 → 보고서 생성의 다단계 파이프라인
-- **Agentic 설계**: LLM이 스스로 판단하여 재분석/재검색 등을 결정하는 자율적 에이전트 구현
-- **상태 관리**: 각 단계의 결과를 체계적으로 관리하고 다음 단계로 전달
+🔗 **배포 URL**: [Streamlit 앱 링크](your-streamlit-url-here)  
+▶️ **사용 방법**: API 비용 절감을 위해 1차 이미지 분석 과정을 생략한 테스트 모드를 디폴트로 제공합니다. 왼쪽 사이드바를 열어 "처음부터 VLM으로 분석하기"를 선택하면 전체 파이프라인을 실행할 수 있습니다.
+📊 **LangSmith 트레이스**: 실행 후 공개 링크를 클릭하면 LangSmith 트레이스를 확인할 수 있습니다. 
 
 ---
 
-## 🛠 기술 스택
+## 🏗 아키텍처 (System Architecture)
 
-| 기술 | 용도 |
-|------|------|
-| **LangGraph** | 멀티 에이전트 워크플로우 오케스트레이션 |
-| **OpenAI GPT-4o** | Vision API 기반 이미지 분석 및 OCR |
-| **Tavily** | 실시간 웹 검색 |
-| **Pydantic** | 타입 안전한 State 및 도구 스키마 정의 |
-
----
-
-## 🏗 아키텍처
-
-### 전체 그래프 구조
-
+### 1. 전체 워크플로우
 ```mermaid
 flowchart TB
-    subgraph Main["메인 그래프"]
-        START((START)) --> init[initialize]
-        init --> phase1
-        
-        subgraph phase1["Classification Phase"]
-            cs[classification_supervisor] --> ct[classification_tools]
-            ct -->|"더 분석 필요"| cs
-            ct -->|"분류 완료"| phase1_end((출력))
-        end
-        
-        phase1 --> phase2
-        
-        subgraph phase2["Insight Phase"]
-            is[insight_supervisor] --> it[insight_tools]
-            it -->|"더 검색 필요"| is
-            it -->|"인사이트 충분"| phase2_end((출력))
-        end
-        
-        phase2 --> report[final_report]
-        report --> END((END))
+    START((START)) --> init[initialize]
+    init --> ingestion[Phase 0: Ingestion<br/>경량 VLM 메타데이터 추출]
+    ingestion --> classification[Phase 1: Classification<br/>Strategist-Classifier 루프]
+    classification --> END((END))
+    
+    subgraph ingestion_phase["Phase 0: Ingestion (Workflow)"]
+        ingestion --> batch[배치 처리<br/>gpt-4o-mini]
+        batch --> metadata[IngestionMetadata 추출<br/>description, ocr_text, confidence]
+    end
+    
+    subgraph classification_phase["Phase 1: Classification (Agentic Loop)"]
+        classification --> strategist[Strategist<br/>폴더 구조 설계/수정]
+        strategist --> classifier[Classifier<br/>이미지 분류 및 피드백]
+        classifier -->|낮은 신뢰도| refiner[Vision Refiner<br/>gpt-4o 정밀분석]
+        classifier -->|구조적 피드백| strategist
+        refiner -->|정밀 분석 결과| classifier
+        classifier -->|수렴 완료| complete[Classification Complete]
     end
 ```
 
 ---
 
-## 💭 설계 고민 과정
+## 🔄 설계 진화 과정 (Evolution)
 
-### 1. State 설계: 통합 vs 분리
+1차 과제: 선형 워크플로우 기반 시스템 → 2차 과제: 자율 에이전트 시스템
 
-**초기 접근**: 하나의 통합 State로 모든 데이터 관리
+### Before: 선형 워크플로우 구조
+**고정된 3단계 파이프라인**
+1. `ConductVisionAnalysis`: 이미지 Vision 분석
+2. `ConductClassification`: 분류 수행 지시
+3. `ConductCategoryMerge`: 분류 및 병합 실행
 
-```python
-# ❌ 초기 설계 (통합)
-class ScreenshotAnalyzerState(TypedDict):
-    images: list[str]
-    vision_results: dict
-    classifications: dict
-    category_insights: dict
-    final_report: str
-    # ... 모든 필드가 한 곳에
-```
+**특징**
+- 모든 스크린샷을 매번 고성능 VLM으로 분석
+- 미리 정해진 순서대로만 실행되는 선형 구조
+- 각 단계가 독립적으로 실행되어 전체 맥락 공유 어려움
+- 보고서 생성과 같은 불필요한 부가 기능 포함
 
-**문제점**: 
-- Classification과 Insight는 완전히 다른 작업인데 같은 State를 공유
-- 각 Phase의 내부 상태(반복 횟수, 진행 상황)를 관리하기 어려움
-- 서브그래프 간 결합도가 높아짐
+### After: 자율 에이전트 시스템
+**에이전트 주도의 4단계 구조**
+1. **Ingestion** (Workflow): 경량 VLM으로 텍스트 메타데이터 선추출
+2. **Strategist** (Agent): 전체 상황을 파악하고 최적의 폴더 구조 설계
+3. **Classifier** (Agent): 설계된 전략에 따라 파일 배정 
+4. **Vision Refiner** (Agent): 필요시에만 고성능 VLM으로 정밀 분석
 
-**최종 설계**: Phase별 독립 State + 메인 State
+**핵심 변화**
+- **선형 → 자율**: 고정된 파이프라인에서 에이전트가 상황에 따라 판단하는 구조로 전환
+- **에이전트 협업**: 별도 `ConductCategoryMerge` 삭제, Strategist와 Classifier가 반복적으로 상호작용하며 폴더 구조를 개선 (단일 실행 → 협업 루프)
+- **선택적 실행**: 모든 이미지를 분석하는 대신, 필요한 경우에만 Vision Refiner 호출
+- **목적 집중**: 보고서/웹 검색 제거, 스크린샷 분류 기능에만 집중
 
-```python
-# ✅ 최종 설계 (분리)
-class ScreenshotAnalyzerState(MessagesState):
-    """메인 그래프 상태 - Phase 간 데이터 전달"""
-    images: list[str]
-    classifications: Annotated[dict, override_reducer]
-    category_insights: Annotated[dict, override_reducer]
-    final_report: str
-
-class ClassificationState(MessagesState):
-    """Classification 서브그래프 전용 상태"""
-    images: list[str]
-    analyzed_images: list[str]  # Phase 내부 진행 상황
-    iteration_count: int        # Agentic 루프 카운터
-    vision_results: dict
-    classifications: dict
-
-class InsightState(MessagesState):
-    """Insight 서브그래프 전용 상태"""
-    categories: list[str]
-    searched_categories: list[str]  # Phase 내부 진행 상황
-    iteration_count: int            # Agentic 루프 카운터
-    category_insights: dict
-```
-
-**결정 이유**: 
-- 각 Phase가 독립적인 책임을 가짐
-- Phase 내부의 Agentic 루프를 깔끔하게 관리 가능
-- LangGraph의 서브그래프 패턴과 자연스럽게 연결
+### 개선 효과
+- 선형 워크플로우의 경직성 탈피, 상황에 맞는 유연한 처리 가능
+- 고성능 VLM 호출 횟수 대폭 감소로 API 비용 절감
+- 에이전트가 전체 맥락을 이해하고 전략 수립
+- 디버깅 및 유지보수 용이
 
 ---
 
-### 2. 그래프 구조: 복잡한 서브그래프 vs 단순 선형
+## 💡 핵심 설계 결정 (Design Decisions)
 
-**고민**: open_deep_research처럼 복잡한 구조를 그대로 따라할 것인가?
+리팩토링 과정에서 내린 주요 설계 결정들입니다.
 
-| 비교 | open_deep_research | 본 프로젝트 |
-|------|-------------------|-------------|
-| **목적** | 다양한 질문에 동적 대응 | 고정된 워크플로우 (분류 → 인사이트) |
-| **작업 특성** | 매번 다른 리서치 경로 | 동일한 파이프라인 반복 |
-| **복잡도** | 높음 (Human-in-the-loop 등) | 중간 |
+### 1. Workflow와 Agent의 역할 분리
 
-**결정**: 
-- 메인 플로우는 **선형** (Classification → Insight → Report)
-- 각 Phase 내부는 **Agentic** (supervisor ↔ tools 루프)
+**문제점**
+- 선형 워크플로우는 안정적이지만 유연성이 부족
+- 모든 과정을 에이전트에게 맡기면 실행 경로가 불안정하고 비용 예측이 어려움
 
-**이유**: 
-- 우리 워크플로우는 "분류 → 인사이트 → 보고서"로 고정됨
-- 하지만 각 Phase 내부에서는 LLM이 자율적으로 판단해야 함
-  - "이 이미지 분류가 애매한데 다시 분석할까?"
-  - "인사이트가 부족한데 다른 키워드로 검색할까?"
+**해결 방법**
+- 반복적인 데이터 처리(스크린샷 메타데이터 추출)는 **Workflow(Ingestion)**로 안정적으로 실행
+- 분류 전략 수정 같은 고차원 판단은 **Agent(Strategist, Classifier)**가 자율적으로 수행
 
----
+**결론**: 안정성이 필요한 부분은 워크플로우로, 유연한 판단이 필요한 부분은 에이전트로 분리
 
-### 3. Agentic 설계: Supervisor 패턴
+### 2. 2단계 분석을 통한 비용 최적화 (Selective Refinement)
 
-각 Phase 내부에서 **Supervisor가 판단하고 Tools가 실행**하는 구조를 채택했습니다.
+**문제점**
+- 모든 스크린샷을 고성능 VLM(GPT-4o)으로 분석하면 API 비용이 과도하게 발생
 
-```
-┌─────────────────────────────────────────────┐
-│           Classification Phase              │
-│                                             │
-│   Supervisor (LLM)                          │
-│   "미분석 이미지가 3장 있네,                      │
-│    Vision 분석을 먼저 하자"                     │
-│         │                                   │
-│         ▼ ConductVisionAnalysis             │
-│   Tools (실행)                               │
-│   - Vision API 호출                          │
-│   - 결과 State에 저장                          │
-│         │                                   │
-│         ▼ (결과 반환)                         │
-│   Supervisor (LLM)                          │
-│   "분석 완료! 이제 분류하자"                      │
-│         │                                   │
-│         ▼ ConductClassification             │
-│   Tools (실행)                               │
-│   - 분류 수행                                 │
-│         │                                   │
-│         ▼ (결과 반환)                         │
-│   Supervisor (LLM)                          │
-│   "신뢰도가 높아. 완료!"                        │
-│         │                                   │
-│         ▼ ClassificationComplete            │
-│                                             │
-└─────────────────────────────────────────────┘
-```
+**해결 방법**
+- **Phase 0 (Ingestion)**: 경량 모델(`gpt-4o-mini`)로 텍스트 메타데이터 추출
+- **Phase 1 (Vision Refiner)**: 1차 추출한 텍스트만으로 판단 어려운 경우에만 고성능 VLM 호출하여 추가적인 맥락 파악 
 
-**Supervisor가 사용하는 도구들**:
+**효과**: 분류 품질 유지하면서 고성능 VLM 호출 비용 절감
 
-| Phase | 도구 | 설명 |
-|-------|------|------|
-| Classification | `ConductVisionAnalysis` | 이미지 Vision 분석 지시 |
-| Classification | `ConductClassification` | 분류 수행 지시 |
-| Classification | `ClassificationComplete` | Phase 완료 선언 |
-| Insight | `ConductSearch` | 웹 검색 지시 |
-| Insight | `InsightComplete` | Phase 완료 선언 |
+### 3. 에이전트 안정성 장치 (Guardrails)
+
+**문제점**
+- 자율 루프가 무한 반복되거나 불필요한 비용을 소진할 위험
+
+**해결 방법**
+- **Iteration Limit**: 최대 재설계 횟수 제한
+- **Convergence Check**: 폴더 구조 변경이 없으면 자동 종료
+
+**결론**: 에이전트 자율성에는 반드시 명확한 종료 조건이 필요
 
 ---
 
-## 📁 프로젝트 구조
+## 🚀 멀티 에이전트 설계 원칙
 
-```
-capture-insight/
-├── app.py                    # Streamlit 웹앱
-├── requirements.txt          # Streamlit Cloud 배포용 의존성
-├── langgraph.json            # LangGraph 설정
-├── pyproject.toml            # 의존성 관리 (uv)
-├── src/screenshot_analyzer/
-│   ├── analyzer.py           # 메인 그래프 및 서브그래프 정의
-│   ├── state.py              # State 및 도구 스키마 정의
-│   ├── prompts.py            # LLM 프롬프트 템플릿
-│   ├── configuration.py      # 설정 관리
-│   └── utils.py              # Vision API, Tavily 검색 유틸
-├── examples/
-│   └── screenshots/          # 예제 스크린샷 (80장)
-├── scripts/
-│   └── run_example.py        # CLI 실행 스크립트
-└── .streamlit/
-    └── secrets.toml.example  # Streamlit Cloud 환경 변수 템플릿
-```
+실제 구현 과정에서 발생한 문제들을 해결하며 확립한 설계 원칙들입니다.
 
----
+### 관심사의 분리 (Separation of Concerns)
+각 에이전트는 단일 책임만 수행하도록 설계:
+- **VLM (Ingestion)**: 시각적 정보 추출만 담당
+- **Strategist**: 폴더 구조 설계
+- **Classifier**: 파일 배정
+- **Vision Refiner**: 선택적 정밀 분석
 
-## 🚀 실행 방법
+이를 통해 판단 편향을 줄이고 각 단계의 품질을 독립적으로 개선 가능
 
-### 방법 1: 웹앱으로 바로 사용 (추천)
+### 권한 위계와 판단 격리 (Authority Hierarchy)
+**원칙**
+- 하위 에이전트의 제안이 상위 에이전트의 결정권을 침해하지 않도록 설계
 
-👉 **[https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app](https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app)**
+**문제 상황**
+- Vision Refiner 과정에서 VLM이 추천 폴더명을 직접 제공했을 때, Classifier가 Strategist의 구조를 무시하고 VLM 제안을 맹신
 
-### 방법 2: 로컬에서 실행
+**해결**
+- VLM 출력에서 '추천 폴더' 필드 삭제, '객관적 묘사'만 전달
+- 최종 판단은 Classifier가 Strategist의 가이드 하에서만 수행하도록 권한 격리
 
-#### 1. 의존성 설치
-```bash
-# uv 설치 (없는 경우)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+### 피드백 기반 협업 루프 (Feedback Loop)
+**원칙**
+- 에이전트 간 상호작용은 단방향이 아닌 양방향 피드백 루프로 구성
 
-# 의존성 설치
-uv sync
-```
+**구현**
+- Classifier가 분류 중 모호함을 느끼면 `ReportAmbiguity`로 Strategist에게 구조 변경 역제안
+- Strategist는 피드백을 수용하거나 원칙에 따라 기각하며 구조 확정
+- 상호작용을 통해 시스템이 스스로 구조적 결함을 개선
 
-#### 2. 환경 변수 설정
-```bash
-cp env.example .env
-```
+### Self-Healing 메커니즘
+**원칙**
+- LLM이 잘못된 형식을 반환해도 시스템을 중단하지 않고 자가 수정 기회 제공
 
-```env
-# .env
-OPENAI_API_KEY=sk-your-openai-api-key
-TAVILY_API_KEY=tvly-your-tavily-api-key
+**구현**
+- Pydantic으로 응답 형식 검증 (예: Dictionary 대신 List 반환 감지)
+- ValidationError 발생 시, 에러 메시지를 프롬프트에 포함하여 LLM에게 재전달
+- 코드 레벨의 타입 체크와 프롬프트 레벨의 피드백("동료 설계 무시 행위") 결합
 
-# LangSmith (선택)
-LANGSMITH_API_KEY=lsv2_pt_your-langsmith-api-key
-LANGSMITH_PROJECT=capture-insight
-LANGSMITH_TRACING=true
-```
-
-#### 3-A. Streamlit 웹앱 실행
-```bash
-uv run streamlit run app.py
-```
-
-#### 3-B. LangGraph Studio 실행
-```bash
-uvx --refresh --from "langgraph-cli[inmem]" --with-editable . --python 3.11 langgraph dev
-```
-
-#### 3-C. CLI 스크립트 실행
-```bash
-# 분석만
-uv run python scripts/run_example.py
-
-# 분석 + 폴더 정리 + 보고서 저장
-uv run python scripts/run_example.py --organize --report
-```
+**효과**
+- 시스템 회복 탄력성 증가, 예외 상황에서도 안정적 실행
 
 ---
 
-## 📊 입출력 예시
+## 🛠 기술 스택
 
-### 입력
-- 스크린샷 이미지 파일들 (PNG, JPG 등)
-
-### 출력
-
-#### 1. 분류 결과
-```
-📁 분류된 스크린샷/
-├── 📂 쇼핑/
-│   └── 📂 의류/
-│       └── 🖼️ IMG_001.png
-├── 📂 SNS/
-│   └── 📂 일상/
-│       └── 🖼️ IMG_002.png
-└── 📂 뉴스/
-    └── 🖼️ IMG_003.png
-```
-
-#### 2. 카테고리별 인사이트
-- 트렌드 정보
-- 추천 사항
-- 관련 뉴스
-
-#### 3. 종합 보고서
-- 마크다운 형식의 분석 보고서
+| 기술 | 버전 | 용도 |
+| --- | --- | --- |
+| **LangGraph** | 0.2.x | 멀티 에이전트 워크플로우 오케스트레이션 |
+| **OpenAI GPT-4o / mini** | latest | Vision API 기반 이미지 분석 (정밀/경량) |
+| **Pydantic** | v2 | 타입 안전한 State 및 도구 스키마 정의 |
+| **Streamlit** | latest | 직관적인 웹 인터페이스 제공 |
+| **LangSmith** | latest | 에이전트 실행 과정 트레이싱 및 디버깅 |
 
 ---
 
-## 🔗 LangSmith 트레이싱
-
-분석 완료 후 **공개 트레이스 링크**가 자동 생성됩니다.
-- 로그인 없이 누구나 에이전트 실행 과정을 확인할 수 있습니다.
+## 📂 프로젝트 구조
+```text
+src/screenshot_analyzer/
+├── analyzer.py       # 메인 그래프 및 서브그래프 정의 (Logic)
+├── state.py          # IngestionMetadata, RefinementResult 등 State 정의
+├── prompts.py        # 에이전트별 페르소나 및 시스템 프롬프트
+└── utils.py          # Vision API 호출 및 이미지 전처리 유틸
+```
