@@ -296,226 +296,206 @@ def main():
     
     # 고정 메타데이터 (테스트용) - 실제 VLM으로 추출한 메타데이터
     FIXED_METADATA = {
-        "examples/screenshots/IMG_5563.PNG": {
-            "image_path": "examples/screenshots/IMG_5563.PNG",
-            "primary_subject": "자는 고양이 사진",
-            "ocr_text": "수연여사, 2025. 9. 17. 오후 1:43",
-            "confidence_score": 0.85,
-            "needs_visual_refinement": False,
-            "suggested_categories": [
-                "동물",
-                "고양이",
-                "사진"
-            ],
-            "ingestion_error": None
-        },
-        "examples/screenshots/IMG_5202.PNG":{
+        "examples/screenshots/IMG_5202.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_5202.PNG",
-            "primary_subject": "오렌지색 인형과 함께 자고 있는 고양이 사진",
-            "ocr_text": "수연여사, 2025. 3. 18. 오전 10:30",
-            "confidence_score": 0.85,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "",
+            "primary_subject": "주황색 인형 옆에서 자는 고양이",
             "suggested_categories": [
-                "고양이",
-                "애완동물",
-                "사진"
-            ],
-            "ingestion_error": None
+            "동물",
+            "고양이"
+            ]
+        },
+        "examples/screenshots/IMG_5563.PNG": {
+            "confidence_score": 0.9,
+            "image_path": "examples/screenshots/IMG_5563.PNG",
+            "ingestion_error": None,
+            "needs_visual_refinement": False,
+            "ocr_text": "",
+            "primary_subject": "잠자는 오렌지 고양이",
+            "suggested_categories": [
+            "동물",
+            "고양이"
+            ]
         },
         "examples/screenshots/IMG_5779.PNG": {
-            "image_path": "examples/screenshots/IMG_5779.PNG",
-            "primary_subject": "메가트루 파워 비타민 제품 이미지",
-            "ocr_text": "메가트루 파워, 60정, 비타민 100mg",
             "confidence_score": 0.9,
+            "image_path": "examples/screenshots/IMG_5779.PNG",
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "메가트루 파워, 60정, 비타민 100mg",
+            "primary_subject": "메가트루 파워 비타민 제품",
             "suggested_categories": [
-                "건강식품",
-                "비타민",
-                "영양제"
-            ],
-            "ingestion_error": None
+            "건강",
+            "비타민"
+            ]
         },
         "examples/screenshots/IMG_5780.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_5780.PNG",
-            "primary_subject": "비타민 B 제품 상세 이미지",
-            "ocr_text": "비맥스 메타비, 60정, GC녹십자, 2025-03-27",
-            "confidence_score": 0.85,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "비맥스 메타 비 B-max Meta B tab 60정",
+            "primary_subject": "비타민 제품",
             "suggested_categories": [
-                "건강보조식품",
-                "비타민",
-                "의약품"
-            ],
-            "ingestion_error": None
+            "건강",
+            "영양제"
+            ]
         },
         "examples/screenshots/IMG_5888.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_5888.PNG",
-            "primary_subject": "NOW FOODS 오메가-3 피쉬 오일 보충제",
-            "ocr_text": "Omega-3, Supplement Facts, 7,860원",
-            "confidence_score": 0.85,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "Supplement Facts, Serving Size 1 Fish Softgel",
+            "primary_subject": "오메가-3 피쉬 오일 보충제",
             "suggested_categories": [
-                "건강보조식품",
-                "영양제",
-                "오메가-3"
-            ],
-            "ingestion_error": None
+            "건강",
+            "영양제"
+            ]
         },
         "examples/screenshots/IMG_6443.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_6443.PNG",
-            "primary_subject": "인생에 대한 성찰과 성장에 관한 메시지",
-            "ocr_text": "Life can be heavy, 인생이 무겁게 느껴질 수 있습니다, catch and release",
-            "confidence_score": 0.88,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "Life can be heavy, especially if you try to carry it all at once.",
+            "primary_subject": "인생에 대한 성찰적 글귀",
             "suggested_categories": [
-                "자기계발",
-                "심리",
-                "에세이"
-            ],
-            "ingestion_error": None
+            "문학",
+            "인생"
+            ]
         },
         "examples/screenshots/IMG_6686.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_6686.PNG",
-            "primary_subject": "패션 스타일링 비디오, 출근 준비에 대한 내용",
-            "ocr_text": "출근 준비 5분 컷, 3가지 조합만 외우세요, 여름, 화이트 롱스커트",
-            "confidence_score": 0.85,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "출근 준비 5분 컷, 3가지 조합만 외우세요, 여름 뻥뻥템은 무조건 이거지",
+            "primary_subject": "여성의 패션 스타일링",
             "suggested_categories": [
-                "패션",
-                "비디오",
-                "스타일링"
-            ],
-            "ingestion_error": None
+            "패션",
+            "스타일링"
+            ]
         },
         "examples/screenshots/IMG_7619.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_7619.PNG",
-            "primary_subject": "고양이가 침대에 누워있는 모습",
-            "ocr_text": "1.4만, 5,547, Tears - Sabrina Carpenter, @UNDER_WORLD_b1",
-            "confidence_score": 0.75,
-            "needs_visual_refinement": True,
+            "ingestion_error": None,
+            "needs_visual_refinement": False,
+            "ocr_text": "1.4만, 5,547",
+            "primary_subject": "편안히 누워있는 고양이",
             "suggested_categories": [
-                "고양이",
-                "반려동물",
-                "동물"
-            ],
-            "ingestion_error": None
+            "동물",
+            "고양이"
+            ]
         },
         "examples/screenshots/IMG_7943.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_7943.PNG",
-            "primary_subject": "ZIGZAG 의류 쇼핑 앱 페이지",
-            "ocr_text": "ZIGZAG, 겨울을 준비하는 가이드건, 최대 69,000원 쿠폰팩",
-            "confidence_score": 0.88,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "겨울을 준비하는 가디건, 지그재그 특가 보러 가기",
+            "primary_subject": "겨울 의상을 착용한 모델",
             "suggested_categories": [
-                "패션",
-                "쇼핑 앱",
-                "할인"
-            ],
-            "ingestion_error": None
+            "패션",
+            "의류"
+            ]
         },
         "examples/screenshots/IMG_9335.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_9335.PNG",
-            "primary_subject": "안락한 침실 사진, 편안한 휴식 공간을 표현",
-            "ocr_text": "a safe place to rest",
-            "confidence_score": 0.85,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "a safe place to rest",
+            "primary_subject": "안락한 침대가 있는 방",
             "suggested_categories": [
-                "인테리어",
-                "침실",
-                "사진"
-            ],
-            "ingestion_error": None
+            "인테리어",
+            "홈"
+            ]
         },
         "examples/screenshots/IMG_9336.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_9336.PNG",
-            "primary_subject": "아늑한 실내 공간의 사진, 조명과 장식이 잘 꾸며져 있음",
-            "ocr_text": "a safe place to rest, happy Sunday",
-            "confidence_score": 0.75,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "a safe place to rest",
+            "primary_subject": "따뜻한 분위기의 실내 공간",
             "suggested_categories": [
-                "인테리어",
-                "실내 공간",
-                "사진"
-            ],
-            "ingestion_error": None
+            "인테리어",
+            "리빙"
+            ]
         },
         "examples/screenshots/IMG_9340.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_9340.PNG",
-            "primary_subject": "색감 넘치는 인테리어 사진",
-            "ocr_text": "MORE SPAGHETTI, LESS UPSETTI, SUNNY SIDE UP",
-            "confidence_score": 0.85,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "MORE SPAGHETTI LESS UPSETTI, SUNNY SIDE UP",
+            "primary_subject": "아늑한 인테리어",
             "suggested_categories": [
-                "인테리어",
-                "사진",
-                "디자인"
-            ],
-            "ingestion_error": None
+            "인테리어",
+            "디자인"
+            ]
         },
         "examples/screenshots/IMG_9604.PNG": {
-            "image_path": "examples/screenshots/IMG_9604.PNG",
-            "primary_subject": "마리끌레르 겨울 리드 상품 페이지",
-            "ocr_text": "체크패턴, 129,000원, 69,000 won, 마리끌레르 연말 감사전",
             "confidence_score": 0.9,
+            "image_path": "examples/screenshots/IMG_9604.PNG",
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "체크패턴으로 완성한 겨울의 리듬 69,000 won",
+            "primary_subject": "체크 패턴 겨울 리듬 재킷",
             "suggested_categories": [
-                "패션",
-                "의류",
-                "상품 페이지"
-            ],
-            "ingestion_error": None
+            "패션",
+            "의류"
+            ]
         },
         "examples/screenshots/IMG_9668.jpg": {
+            "confidence_score": 0,
             "image_path": "examples/screenshots/IMG_9668.jpg",
-            "primary_subject": "책 페이지의 일부 텍스트",
-            "ocr_text": "진정성, 지니어스 코드, Ozan Varol, 35세, 25세",
-            "confidence_score": 0.85,
-            "needs_visual_refinement": False,
-            "suggested_categories": [
-                "책",
-                "문서",
-                "교육"
-            ],
-            "ingestion_error": None
+            "ingestion_error": "Error code: 429 - {'error': {'message': 'Rate limit reached for gpt-4o-mini in organization org-Vb8PD8Lmfw6vR68VHKJoeMls on tokens per min (TPM): Limit 200000, Used 200000, Requested 1163. Please try again in 348ms. Visit https://platform.openai.com/account/rate-limits to learn more.', 'type': 'tokens', 'param': None, 'code': 'rate_limit_exceeded'}}",
+            "needs_visual_refinement": True,
+            "ocr_text": "",
+            "primary_subject": "분석 실패",
+            "suggested_categories": []
         },
         "examples/screenshots/IMG_9691.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_9691.PNG",
-            "primary_subject": "생명에 대한 메시지를 담은 글",
-            "ocr_text": "이여령 교수, 메시지는 단순했다, 삶은 아까지 않을 때, 배움과 말, '어디에 마음을 쓰냐'",
-            "confidence_score": 0.85,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "삶은 아끼지 않을 때 비로소 살아진다.",
+            "primary_subject": "삶에 대한 메시지",
             "suggested_categories": [
-                "글",
-                "에세이",
-                "생각"
-            ],
-            "ingestion_error": None
+            "철학",
+            "삶의 지혜"
+            ]
         },
         "examples/screenshots/IMG_9891.PNG": {
+            "confidence_score": 0.88,
             "image_path": "examples/screenshots/IMG_9891.PNG",
-            "primary_subject": "커피 데이트 준비 영상",
-            "ocr_text": "Get ready with me for a coffee date, Olivia Dean, Man I Need",
-            "confidence_score": 0.85,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "Get ready with me for a coffee date",
+            "primary_subject": "여성의 옷차림 준비",
             "suggested_categories": [
-                "패션",
-                "브이로그",
-                "데이트"
-            ],
-            "ingestion_error": None
+            "패션",
+            "브이로그"
+            ]
         },
         "examples/screenshots/IMG_9903.PNG": {
+            "confidence_score": 0.9,
             "image_path": "examples/screenshots/IMG_9903.PNG",
-            "primary_subject": "패션 스타일 영감 사진, 레이첼 그린 의상 영감",
-            "ocr_text": "Rachel green outfit inspo",
-            "confidence_score": 0.85,
+            "ingestion_error": None,
             "needs_visual_refinement": False,
+            "ocr_text": "Rachel green outfit inspo",
+            "primary_subject": "모델과 의상",
             "suggested_categories": [
-                "패션",
-                "스타일",
-                "영감"
-            ],
-            "ingestion_error": None
+            "패션",
+            "스타일"
+            ]
         }
     }
     

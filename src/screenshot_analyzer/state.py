@@ -80,7 +80,6 @@ class DesignFolderStructure(BaseModel):
     """폴더 구조 설계 도구.
     
     Strategist가 전체 메타데이터를 조망하여 최적의 폴더 리스트를 설계합니다.
-    처음부터 중복 없는 깔끔한 구조를 만들어 CategoryMerge 불필요.
     """
     
     folders: List[str] = Field(
@@ -136,6 +135,7 @@ class ClassifyImages(BaseModel):
     """
     
     assignments: Dict[str, str] = Field(
+        min_items=1,  # 최소 1개 이상 아이템이 있어야 함!
         description="분류 결과. {이미지경로: 폴더명}"
     )
     confidence_scores: Dict[str, float] = Field(
