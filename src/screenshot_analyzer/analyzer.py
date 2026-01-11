@@ -57,13 +57,13 @@ async def initialize(state: InputState, config: RunnableConfig) -> dict:
     images = state.get("images", [])
     existing_categories = state.get("existing_categories", None)
     # 테스트 모드: 입력에 이미 메타데이터가 있으면 보존
-    existing_metadatas = state.get("image_metadatas", {})
+    existing_metadatas = state.get("image_metadatas") or {}
     
     return {
         "images": images,
         "existing_categories": existing_categories,
         # Phase 0: Ingestion
-        "image_metadatas": existing_metadatas if existing_metadatas else {},  # 입력에 있으면 보존, 없으면 빈 dict
+        "image_metadatas": existing_metadatas,  # 입력에 있으면 보존, 없으면 빈 dict
         # Phase 1: Classification (Strategist-Classifier)
         "vision_results": {},
         "classifications": {},
@@ -86,7 +86,8 @@ async def run_ingestion(state: ScreenshotAnalyzerState, config: RunnableConfig) 
     # 테스트 모드: 이미 메타데이터가 있으면 스킵
     if existing_metadatas:
         logger.info(f"🧪 테스트 모드: 기존 메타데이터 사용 ({len(existing_metadatas)}개). VLM 호출 스킵.")
-        return {}  # 상태 변경 없음
+        # 빈 dict 반환: override_reducer가 기존 값을 유지함 ({**기존값, **{}} = 기존값)
+        return {}
     
     if not images:
         return {"image_metadatas": {}}
@@ -117,7 +118,7 @@ def _summarize_metadata(image_metadatas: dict) -> str:
     summaries = []
     for path, meta in list(image_metadatas.items())[:20]:  # 최대 20개만 표시
         if isinstance(meta, dict):
-            desc = meta.get("description", "설명 없음")
+            desc = meta.get("primary_subject", "설명 없음")
             ocr = meta.get("ocr_text", "")[:50]
             conf = meta.get("confidence_score", 0)
             needs_refine = meta.get("needs_visual_refinement", False)
@@ -257,7 +258,6 @@ async def strategist_tools(
     tool_messages = []
     update_payload = {}
     goto_classifier = False
-    should_end = False
     
     # 도구들 처리
     for tool_call in most_recent_message.tool_calls:
@@ -414,7 +414,7 @@ async def classifier(
         
         pending_metadata_list.append({
             "image_path": path,  # 🔥 명확히 표시
-            "description": meta.get("description", ""),
+            "primary_subject": meta.get("primary_subject", ""),
             "ocr_text": meta.get("ocr_text", ""),
             "confidence_score": meta.get("confidence_score", 0),
             "suggested_categories": meta.get("suggested_categories", []),
@@ -435,9 +435,7 @@ async def classifier(
     
     # Human 프롬프트 구성
     human_prompt = CLASSIFIER_HUMAN_PROMPT.format(
-        folders=json.dumps(current_folders, ensure_ascii=False, indent=2),
-        folder_descriptions=json.dumps(folder_descriptions, ensure_ascii=False, indent=2),
-        pending_metadata=json.dumps(pending_metadata_list, ensure_ascii=False, indent=2),  # 🔥 개선
+        pending_metadata=json.dumps(pending_metadata_list, ensure_ascii=False, indent=2),
         refinement_results=json.dumps(refinement_results, ensure_ascii=False, indent=2) if refinement_results else "없음",
         current_assignments=json.dumps(assignments, ensure_ascii=False, indent=2) if assignments else "없음",
     )
@@ -567,50 +565,11 @@ async def classifier_tools(
             confidence_scores = tool_args.get("confidence_scores", {})
             reasoning = tool_args.get("reasoning", "")
             
-            # assignments 유효성 검사 및 단순 폴더명으로 변환
+            # assignments 유효성 검사: 빈 딕셔너리는 무시
             if not new_assignments:
-                logger.error(f"❌ ClassifyImages의 assignments가 비어있습니다!")
-                logger.error(f"받은 args: {tool_args}")
-                
-                # 🔥 LLM에게 명확한 피드백
-                error_message = """ERROR: assignments가 비어있습니다!
-
-ClassifyImages를 호출할 때는 반드시 다음 형식을 따라주세요:
-
-{{
-    "assignments": {{
-        "이미지경로1": "폴더명1",
-        "이미지경로2": "폴더명2"
-    }},
-    "confidence_scores": {{
-        "이미지경로1": 0.95,
-        "이미지경로2": 0.88
-    }},
-    "reasoning": "분류 이유..."
-}}
-
-예시:
-{{
-    "assignments": {{
-        "examples/screenshots/IMG_5779.PNG": "건강",
-        "examples/screenshots/IMG_6677.PNG": "패션"
-    }},
-    "confidence_scores": {{
-        "examples/screenshots/IMG_5779.PNG": 0.95,
-        "examples/screenshots/IMG_6677.PNG": 0.88
-    }},
-    "reasoning": "IMG_5779는 영양제 상품으로 건강 폴더에 분류"
-}}
-
-**중요**: 
-- assignments는 반드시 {{이미지경로: 폴더명}} 형태의 딕셔너리여야 합니다
-- 이미지 경로는 "분류 대상 이미지 메타데이터"에 나온 "image_path"를 정확히 사용하세요
-- 폴더명은 "사용 가능한 폴더" 목록에 있는 것만 사용하세요
-
-다시 시도해주세요."""
-
+                logger.warning(f"ClassifyImages의 assignments가 비어있습니다. 무시하고 계속합니다.")
                 tool_messages.append(ToolMessage(
-                    content=error_message,
+                    content="경고: assignments가 비어있습니다. 이미지를 분류하려면 assignments에 {이미지경로: 폴더명} 형태로 분류 결과를 포함해주세요.",
                     name=tool_name,
                     tool_call_id=tool_call["id"],
                 ))
@@ -620,13 +579,20 @@ ClassifyImages를 호출할 때는 반드시 다음 형식을 따라주세요:
                 validated_assignments = {}
                 current_folders = state.get("current_folders", [])
                 for img_path, folder_name in new_assignments.items():
-                    # folder_name이 리스트나 딕셔너리인 경우 첫 번째 값 추출
-                    if isinstance(folder_name, list):
+                    # folder_name이 None이거나 예상 타입이 아닌 경우 처리
+                    if folder_name is None:
+                        logger.warning(f"Classifier: {img_path}의 폴더명이 None입니다. '기타'로 설정합니다.")
+                        folder_name = "기타"
+                    elif isinstance(folder_name, list):
                         folder_name = folder_name[0] if folder_name else "기타"
                         logger.warning(f"Classifier: {img_path}의 폴더명이 리스트입니다. 첫 번째 값 사용: {folder_name}")
                     elif isinstance(folder_name, dict):
                         folder_name = list(folder_name.keys())[0] if folder_name else "기타"
                         logger.warning(f"Classifier: {img_path}의 폴더명이 딕셔너리입니다. 첫 번째 키 사용: {folder_name}")
+                    elif not isinstance(folder_name, str):
+                        # str이 아닌 다른 타입(int, bool 등)을 문자열로 변환
+                        folder_name = str(folder_name)
+                        logger.warning(f"Classifier: {img_path}의 폴더명이 문자열이 아닙니다. 문자열로 변환: {folder_name}")
                     
                     # 폴더명이 current_folders에 없으면 경고
                     if folder_name not in current_folders:
@@ -775,7 +741,6 @@ async def vision_refiner(
     
     refinement_requests = state.get("refinement_requests", {})
     image_paths = refinement_requests.get("image_paths", []) if refinement_requests else []
-    questions = refinement_requests.get("questions", {}) if refinement_requests else {}
     
     logger.info(f"🔍 Vision Refiner 시작: refinement_requests={refinement_requests}")
     logger.info(f"   이미지 경로: {image_paths} (총 {len(image_paths)}장)")
@@ -801,13 +766,14 @@ async def vision_refiner(
             # 안전한 실행 함수 사용 (에러 발생 시에도 계속 진행)
             result = await execute_vision_analysis_safely(img_path, config)
             
-            logger.info(f"✅ VLM 분석 완료: {img_path} → {result.suggested_category} (신뢰도: {result.confidence})")
+            suggested_category = result.suggested_categories[0] if result.suggested_categories else "기타"
+            logger.info(f"✅ VLM 분석 완료: {img_path} → {suggested_category}")
             
-            return (img_path, {
-                "analysis": result.model_dump(),
-                "answer": questions.get(img_path, ""),
-                "recommended_folder": result.suggested_category,
-            })
+            # 프롬프트 형식과 일치하도록 result를 그대로 사용하고, recommended_folder만 추가
+            result_dict = result.model_dump()
+            result_dict["recommended_folder"] = suggested_category
+            
+            return (img_path, result_dict)
     
     # 병렬 처리 (동시성 제한 적용, 에러는 안전한 실행 함수에서 처리)
     logger.info(f"🚀 {len(image_paths)}장의 이미지를 VLM으로 분석 시작...")
@@ -833,32 +799,16 @@ async def vision_refiner(
     
     logger.info(f"💾 refinement_results 저장: 총 {len(merged_results)}개 결과")
     
-    # refinement_results에 recommended_folder가 있는 이미지들을 자동으로 분류
-    auto_assignments = {}
-    current_folders = state.get("current_folders", [])
-    pending_images = state.get("pending_images", [])
-    
-    for img_path, result_dict in new_results.items():
-        recommended_folder = result_dict.get("recommended_folder", "")
-        if recommended_folder and recommended_folder in current_folders:
-            auto_assignments[img_path] = recommended_folder
-            logger.info(f"✅ Vision Refiner 결과로 자동 분류: {img_path} → {recommended_folder}")
-    
-    # 자동 분류된 이미지들을 pending에서 제거
-    new_pending = [p for p in pending_images if p not in auto_assignments]
-    
-    # 기존 assignments에 병합
-    current_assignments = state.get("assignments", {})
-    merged_assignments = {**current_assignments, **auto_assignments}
+    # vision_refiner는 분석만 제공하고, 분류는 Classifier가 결정합니다
+    # pending_images는 유지하여 Classifier가 refinement_results를 참고해서 분류할 수 있도록 함
     
     return Command(
         goto="classifier",
         update={
             "refinement_results": merged_results,
             "refinement_requests": {},  # 요청 처리 완료
-            "assignments": merged_assignments,  # 자동 분류 결과 반영
-            "pending_images": new_pending,  # pending에서 제거
             "current_phase": "classifier",
+            # assignments와 pending_images는 변경하지 않음 (Classifier가 결정)
         }
     )
 

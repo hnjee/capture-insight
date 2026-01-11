@@ -38,10 +38,7 @@ async def ingest_image(
     config: Optional[RunnableConfig] = None
 ) -> IngestionMetadata:
     """경량 VLM으로 단일 이미지의 메타데이터 추출.
-    
-    비용 효율적인 경량 모델(gpt-4o-mini 등)을 사용하여
-    이미지를 텍스트 메타데이터로 변환합니다.
-    
+
     Args:
         image_path: 분석할 이미지 경로
         config: LangGraph 런타임 설정
@@ -58,7 +55,7 @@ async def ingest_image(
     except FileNotFoundError as e:
         return IngestionMetadata(
             image_path=image_path,
-            description="파일을 찾을 수 없음",
+            primary_subject="파일을 찾을 수 없음",
             ocr_text="",
             confidence_score=0.0,
             needs_visual_refinement=True,
@@ -73,19 +70,16 @@ async def ingest_image(
         "max_tokens": 1024,  # 메타데이터 추출이므로 작은 토큰으로 충분
         "api_key": api_key,
     }
-    # ✅ with_retry() 추가: rate limit 자동 처리
     model = (
         configurable_model
         .with_config(model_config)
         .with_retry(stop_after_attempt=configuration.max_structured_output_retries)
     )
     
-    # 프롬프트 구성 (refinement_threshold 주입)
-    prompt = INGESTION_PROMPT.format(
-        refinement_threshold=configuration.refinement_threshold
-    )
+    # 프롬프트 구성
+    prompt = INGESTION_PROMPT
     
-    # Vision API 호출 (rate limit은 with_retry가 자동 처리)
+    # Vision API 호출
     message = HumanMessage(
         content=[
             {"type": "text", "text": prompt},
@@ -108,7 +102,7 @@ async def ingest_image(
         
         return IngestionMetadata(
             image_path=image_path,
-            description=result_dict.get("description", ""),
+            primary_subject=result_dict.get("primary_subject", ""),
             ocr_text=result_dict.get("ocr_text", ""),
             confidence_score=confidence,
             needs_visual_refinement=result_dict.get(
@@ -124,7 +118,7 @@ async def ingest_image(
         logger.error(f"Ingestion 실패 ({image_path}): {e}")
         return IngestionMetadata(
             image_path=image_path,
-            description="분석 실패",
+            primary_subject="분석 실패",
             ocr_text="",
             confidence_score=0.0,
             needs_visual_refinement=True,
@@ -157,7 +151,7 @@ async def execute_ingestion_safely(
         # 에러 발생 시 기본값 반환 (프로세스 중단 없음)
         return (img_path, IngestionMetadata(
             image_path=img_path,
-            description="분석 실패",
+            primary_subject="분석 실패",
             ocr_text="",
             confidence_score=0.0,
             needs_visual_refinement=True,
@@ -245,7 +239,7 @@ async def execute_ingestion_safely(
         # 에러 발생 시 기본값 반환 (프로세스 중단 없음)
         return (img_path, IngestionMetadata(
             image_path=img_path,
-            description="분석 실패",
+            primary_subject="분석 실패",
             ocr_text="",
             confidence_score=0.0,
             needs_visual_refinement=True,
@@ -277,11 +271,12 @@ async def execute_vision_analysis_safely(
         # 에러 발생 시 기본값 반환 (프로세스 중단 없음)
         return RefinementResult(
             image_path=img_path,
-            objects=[],
-            scene="분석 실패",
-            extracted_text="",
-            suggested_category="기타",
-            confidence=0.0
+            primary_subject="분석 실패",
+            content_description="",
+            key_text="",
+            visual_details="",
+            suggested_categories=[],
+            additional_context="",
         )
 
 
@@ -338,7 +333,7 @@ async def analyze_image(
     """Vision Refiner: 고성능 VLM으로 이미지 정밀 분석.
     
     needs_visual_refinement=True인 이미지에 대해 상세 분석을 수행합니다.
-    객체, 장면, 텍스트, 카테고리 등을 추출합니다.
+    프롬프트 응답 형식과 일치하는 필드로 결과를 반환합니다.
     
     open_deep_research 방식: with_retry()로 자동 재시도 처리
     
@@ -347,7 +342,7 @@ async def analyze_image(
         config: LangGraph 런타임 설정
         
     Returns:
-        RefinementResult 객체
+        RefinementResult 객체 (프롬프트 필드와 일치)
     """
     configuration = Configuration.from_runnable_config(config)
     
@@ -358,11 +353,12 @@ async def analyze_image(
     except FileNotFoundError as e:
         return RefinementResult(
             image_path=image_path,
-            objects=[],
-            scene="파일을 찾을 수 없음",
-            extracted_text="",
-            suggested_category="기타",
-            confidence=0.0
+            primary_subject="파일을 찾을 수 없음",
+            content_description="",
+            key_text="",
+            visual_details="",
+            suggested_categories=[],
+            additional_context="",
         )
     
     # Vision 모델 설정 (with_retry로 자동 재시도)
@@ -372,14 +368,13 @@ async def analyze_image(
         "max_tokens": configuration.max_tokens,
         "api_key": api_key,
     }
-    # with_retry() 추가: rate limit 자동 처리
     model = (
         configurable_model
         .with_config(model_config)
         .with_retry(stop_after_attempt=configuration.max_structured_output_retries)
     )
     
-    # Vision API 호출 (rate limit은 with_retry가 자동 처리)
+    # Vision API 호출
     message = HumanMessage(
         content=[
             {"type": "text", "text": VISION_ANALYSIS_PROMPT},
@@ -398,13 +393,15 @@ async def analyze_image(
         # JSON 응답 파싱
         result_dict = parse_json_response(response.content)
         
+        # 프롬프트 응답을 그대로 RefinementResult에 저장 (매핑 로직 제거)
         return RefinementResult(
             image_path=image_path,
-            objects=result_dict.get("objects", []),
-            scene=result_dict.get("scene", ""),
-            extracted_text=result_dict.get("extracted_text", ""),
-            suggested_category=result_dict.get("suggested_category", "기타"),
-            confidence=result_dict.get("confidence", 0.5)
+            primary_subject=result_dict.get("primary_subject", ""),
+            content_description=result_dict.get("content_description", ""),
+            key_text=result_dict.get("key_text", ""),
+            visual_details=result_dict.get("visual_details", ""),
+            suggested_categories=result_dict.get("suggested_categories", []),
+            additional_context=result_dict.get("additional_context", ""),
         )
         
     except Exception as e:
@@ -412,11 +409,12 @@ async def analyze_image(
         logger.error(f"이미지 분석 실패 ({image_path}): {e}")
         return RefinementResult(
             image_path=image_path,
-            objects=[],
-            scene="분석 실패",
-            extracted_text="",
-            suggested_category="기타",
-            confidence=0.0
+            primary_subject="분석 실패",
+            content_description="",
+            key_text="",
+            visual_details="",
+            suggested_categories=[],
+            additional_context="",
         )
 
 
