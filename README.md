@@ -28,18 +28,18 @@ flowchart TB
     ingestion --> classification[Phase 1: Classification<br/>Strategist-Classifier 루프]
     classification --> END((END))
     
-    subgraph ingestion_phase["Phase 0: Ingestion (Workflow)"]
-        ingestion --> batch[배치 처리<br/>gpt-4o-mini]
-        batch --> metadata[IngestionMetadata 추출<br/>description, ocr_text, confidence]
-    end
-    
-    subgraph classification_phase["Phase 1: Classification (Agentic Loop)"]
+    subgraph classification_phase[" "]
         classification --> strategist[Strategist<br/>폴더 구조 설계/수정]
         strategist --> classifier[Classifier<br/>이미지 분류 및 피드백]
         classifier -->|낮은 신뢰도| refiner[Vision Refiner<br/>gpt-4o 정밀분석]
         classifier -->|구조적 피드백| strategist
         refiner -->|정밀 분석 결과| classifier
         classifier -->|수렴 완료| complete[Classification Complete]
+    end
+    
+    subgraph ingestion_phase[" "]
+        ingestion --> batch[배치 처리<br/>gpt-4o-mini]
+        batch --> metadata[IngestionMetadata 추출<br/>description, ocr_text, confidence]
     end
 ```
 
