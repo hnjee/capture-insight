@@ -1,28 +1,26 @@
-# 📸 Capture Insight
+## 📸 Capture Insight
 
-> 스크린샷 이미지를 자동으로 분류하고 정리하는 멀티 에이전트 시스템 
-
-**Capture Insight**는 LangGraph 기반의 멀티 에이전트 시스템으로 스크린샷을 자동 분류하는 AI 솔루션입니다.  
-비용 최적화와 분류 정확도 사이의 균형을 에이전틱 디자인 패턴으로 해결했으며, Workflow와 Agent를 조합하여 안정성과 유연성을 확보하고자 했습니다. 
-
----
-
-🔗 **배포 URL**: [Streamlit 앱 링크](https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app/)   
-
-▶️ **사용 가이드**
-- 예제 데이터 제공: 테스트를 위해 17장의 스크린샷 예제 이미지가 내장되어 있습니다.
-- 테스트 모드 (Default): API 비용 절감 및 빠른 체험을 위해, 1차 이미지 분석(Ingestion) 단계가 사전 처리된 데이터를 사용하여 실행됩니다. 에이전트의 전략 수립 및 분류 과정을 즉시 확인할 수 있습니다.
-- 풀 파이프라인 모드: 왼쪽 사이드바에서 **"처음부터 VLM으로 분석하기"** 를 체크하면, 실제 이미지를 실시간으로 분석하는 전체 워크플로우를 경험하실 수 있습니다.
-
-📊 **실시간 분석 추적**  
-- 실행 완료 후 하단의 "LangSmith 공개 링크"를 클릭해 보세요.  
-- 에이전트들이 어떻게 서로 피드백을 주고받으며 의사결정을 내리는지 모든 사고 과정을 투명하게 추적할 수 있습니다.
+> 스크린샷 이미지를 자동으로 분류하고 정리하는 LangGraph 기반 멀티 에이전트 시스템
+  
+**Capture Insight**는 스크린샷을 자동으로 폴더 구조에 분류해 주는 멀티 에이전트입니다.  
+경량 VLM으로 1차 메타데이터를 추출하고, Strategist–Classifier 에이전트 상호작용을 통해 폴더 구조 생성과 분류를 수행하여 **비용과 정확도 사이의 균형**을 맞추도록 설계되었습니다.
 
 ---
 
-## 🏗 아키텍처 (System Architecture)
+- 🔗 **데모 사이트**: [Streamlit 앱 링크](https://capture-insight-3o576qirzvpkwmimbv7vps.streamlit.app/)
+- 🧪 **예제 데이터**: `examples/screenshots/` 폴더에 17장의 예제 스크린샷이 내장되어 있습니다.
+- ⚡ **테스트 모드 (기본값)**: Ingestion 단계는 사전 추출된 메타데이터를 사용해 빠르게 분류 과정을 체험할 수 있습니다.
+- 🔍 **풀 파이프라인 모드**: 사이드바에서 **"🔄 처음부터 VLM으로 분석 (Ingestion 실행)"** 을 체크하면, 실제 이미지를 VLM으로 처음부터 분석하는 전체 워크플로우가 실행됩니다.
+- 📊 **LangSmith 트레이싱** : 
+    - 분석 완료 후 앱 하단의 **"🔗 LangSmith 트레이스 보기 (공개 링크)"** 버튼을 클릭해보세요. 
+    - Strategist와 Classifier가 어떻게 폴더 구조를 협의하고, Vision Refiner가 언제 개입하는지를 한눈에 추적할 수 있습니다.
+    - [Capture Insight 트레이싱 예시 링크](https://smith.langchain.com/public/4ad43967-969e-4dc5-87eb-4b2b3c184933/r) 
+---
+
+## 🏗 시스템 아키텍처
 
 ### 1. 전체 워크플로우
+
 ```mermaid
 flowchart TB
     START((START)) --> init[initialize]
@@ -45,140 +43,119 @@ flowchart TB
     end
 ```
 
----
+### 2. 핵심 설계 특징
 
-## 🔄 설계 진화 과정 
-
-1차 과제: 선형 워크플로우 기반 시스템 -> 2차 과제: 자율 에이전트 시스템으로 리팩토링 진행 
-
-### Before: 선형 워크플로우 구조
-**고정된 3단계 파이프라인**
-1. `ConductVisionAnalysis`: 이미지 Vision 분석
-2. `ConductClassification`: 분류 수행 지시
-3. `ConductCategoryMerge`: 분류 및 병합 실행
-
-**특징**
-- 모든 스크린샷을 매번 고성능 VLM으로 분석
-- 미리 정해진 순서대로만 실행되는 선형 구조
-- 각 단계가 독립적으로 실행되어 전체 맥락 공유 어려움
-- 보고서 생성과 같은 불필요한 부가 기능 포함
-
-### After: 자율 에이전트 시스템
-**에이전트 주도의 4단계 구조**
-1. **Ingestion** (Workflow): 경량 VLM으로 텍스트 메타데이터 선추출
-2. **Strategist** (Agent): 전체 상황을 파악하고 최적의 폴더 구조 설계
-3. **Classifier** (Agent): 설계된 전략에 따라 파일 배정 
-4. **Vision Refiner** (Agent): 필요시에만 고성능 VLM으로 정밀 분석
-
-**핵심 변화**
-- **선형 → 자율**: 고정된 파이프라인에서 에이전트가 상황에 따라 판단하는 구조로 전환
-- **에이전트 협업**: 별도 `ConductCategoryMerge` 삭제, Strategist와 Classifier가 반복적으로 상호작용하며 폴더 구조를 개선 (단일 실행 → 협업 루프)
-- **선택적 실행**: 모든 이미지를 분석하는 대신, 필요한 경우에만 Vision Refiner 호출
-- **목적 집중**: 보고서/웹 검색 제거, 스크린샷 분류 기능에만 집중
-
-### 개선 효과
-- 선형 워크플로우의 경직성 탈피, 상황에 맞는 유연한 처리 가능
-- 고성능 VLM 호출 횟수 대폭 감소로 API 비용 절감
-- 에이전트가 전체 맥락을 이해하고 전략 수립
-- 디버깅 및 유지보수 용이
+- **선형 파이프라인 → 자율 에이전트 루프**
+  - 고정된 3단계 워크플로우 대신, Strategist–Classifier–Vision Refiner가 상황에 따라 상호작용하며 폴더 구조를 조정.
+- **2단계 분석으로 비용 최적화**
+  - Phase 0: `gpt-4o-mini`로 텍스트 메타데이터 추출  
+  - Phase 1: 신뢰도가 낮거나 애매한 경우에만 `gpt-4o` Vision Refiner 호출
+- **에이전트 안정성 장치**
+  - 최대 반복 횟수 제한, 폴더 구조 변화가 없을 때 자동 종료(Convergence Check)
 
 ---
 
-## 💡 핵심 설계 결정
+## 🚀 Quickstart (로컬 실행 - `uv` 기준)
 
-리팩토링 과정에서 내린 주요 설계 결정들입니다.
+### 1. 저장소 클론
 
-### 1. Workflow와 Agent의 역할 분리
+```bash
+git clone https://github.com/your-name/capture-insight.git
+cd capture-insight
+```
 
-**문제점**
-- 선형 워크플로우는 안정적이지만 유연성이 부족
-- 모든 과정을 에이전트에게 맡기면 실행 경로가 불안정하고 비용 예측이 어려움
+### 2. 환경 변수 설정
 
-**해결 방법**
-- 반복적인 데이터 처리(스크린샷 메타데이터 추출)는 **Workflow(Ingestion)** 로 안정적으로 실행
-- 분류 전략 수정 같은 고차원 판단은 **Agent(Strategist, Classifier)** 가 자율적으로 수행
+`env.example`를 `.env`로 복사한 뒤, 필수 키를 채워 넣습니다.
 
-**결론**: 안정성이 필요한 부분은 워크플로우로, 유연한 판단이 필요한 부분은 에이전트로 분리
+```bash
+cp env.example .env
+```
 
-### 2. 2단계 분석을 통한 비용 최적화 
+- **필수**
+  - `OPENAI_API_KEY=sk-...`
+- **선택 (있으면 LangSmith 트레이싱/공유 가능)**
+  - `LANGSMITH_API_KEY=lsv2_...`
+  - `LANGSMITH_PROJECT=capture-insight`
+  - `LANGSMITH_TRACING=true`
 
-**문제점**: 모든 스크린샷을 고성능 VLM(GPT-4o)으로 분석하면 API 비용이 과도하게 발생
+### 3. 의존성 설치 (`uv`)
 
-**해결 방법**
-- **Phase 0 (Ingestion)**: 경량 모델(`gpt-4o-mini`)로 텍스트 메타데이터 추출
-- **Phase 1 (Vision Refiner)**: 1차 추출한 텍스트만으로 판단 어려운 경우에만 고성능 VLM 호출하여 추가적인 맥락 파악 
+```bash
+uv sync
+```
 
-**효과**: 분류 품질 유지하면서 고성능 VLM 호출 비용 절감
+Python 3.10 이상이 필요합니다. (`pyproject.toml`의 `requires-python = ">=3.10"`)
 
-### 3. 에이전트 안정성 장치
+### 4. 웹앱 실행
 
-**문제점**: 자율 루프가 무한 반복되거나 불필요한 비용을 소진할 위험
+```bash
+uv run streamlit run app.py
+```
 
-**해결 방법**
-- **Iteration Limit**: 최대 재설계 횟수 제한
-- **Convergence Check**: 폴더 구조 변경이 없으면 자동 종료
-
-**결론**: 에이전트 자율성에는 반드시 명확한 종료 조건이 필요
-
----
-
-## 🚀 멀티 에이전트 설계 원칙
-
-실제 구현 과정에서 발생한 문제들을 해결하며 확립한 설계 원칙들입니다.
-
-### 1. 관심사의 분리
-각 에이전트는 단일 책임만 수행하도록 설계 → 판단 편향을 줄이고 각 단계의 품질을 독립적으로 개선 
-- **VLM (Ingestion)**: 시각적 정보 추출만 담당
-- **Strategist**: 폴더 구조 설계
-- **Classifier**: 파일 배정
-- **Vision Refiner**: 선택적 정밀 분석
-
-### 2. 권한 위계와 판단 격리
-**원칙**: 하위 에이전트의 제안이 상위 에이전트의 결정권을 침해하지 않도록 설계
-
-**문제 상황**: Vision Refiner 과정에서 VLM이 추천 폴더명을 직접 제공했을 때, Classifier가 Strategist의 구조를 무시하고 VLM 제안을 맹신
-
-**해결**
-- VLM 출력에서 '추천 폴더' 필드 삭제, '객관적 묘사'만 전달
-- 최종 판단은 Classifier가 Strategist의 가이드 하에서만 수행하도록 권한 격리
-
-### 3. 피드백 기반 협업 루프
-**원칙**: 에이전트 간 상호작용은 단방향이 아닌 양방향 피드백 루프로 구성
-
-**구현**
-- Classifier가 분류 중 모호함을 느끼면 `ReportAmbiguity`로 Strategist에게 구조 변경 역제안
-- Strategist는 피드백을 수용하거나 원칙에 따라 기각하며 구조 확정
-- 상호작용을 통해 시스템이 스스로 구조적 결함을 개선
-
-### 4. Self-Healing 메커니즘
-**원칙**: LLM이 잘못된 형식을 반환해도 시스템을 중단하지 않고 자가 수정 기회 제공
-
-**구현**
-- Pydantic으로 응답 형식 검증 (예: Dictionary 대신 List 반환 감지)
-- ValidationError 발생 시, 에러 메시지를 프롬프트에 포함하여 LLM에게 재전달
-- 코드 레벨의 타입 체크와 프롬프트 레벨의 피드백("동료 설계 무시 행위") 결합
-
-**효과**: 시스템 회복 탄력성 증가, 예외 상황에서도 안정적 실행
+기본 브라우저에서 Streamlit 앱이 열리며, 예제 스크린샷 목록을 확인하고 **"🚀 분석 시작"** 버튼으로 분류를 실행할 수 있습니다.
 
 ---
 
-## 🛠 기술 스택
+## ⚙️ Configuration (설정 옵션)
+
+### 1. 환경 변수 (`.env`)
+
+`env.example`를 기준으로 주요 옵션은 다음과 같습니다.
+
+- **API 키**
+  - `OPENAI_API_KEY` (필수): OpenAI GPT-4o / 4o-mini 사용을 위한 API 키
+  - `LANGSMITH_API_KEY` (선택): LangSmith 트레이싱 및 공유용
+  - `LANGSMITH_PROJECT` (선택): LangSmith 프로젝트 이름 (기본값: `capture-insight`)
+  - `LANGSMITH_TRACING` (선택): `"true"` 로 설정 시 트레이싱 활성화
+
+- **모델 설정 (필요 시 오버라이드)**
+  - `VISION_MODEL` (기본값: `gpt-4o`)
+  - `ANALYSIS_MODEL` (기본값: `gpt-4o`)
+  - `MAX_TOKENS` (기본값: `8192`)
+
+> 참고: 일부 값은 `Configuration` 클래스에서 환경 변수로도 읽어옵니다. 숫자/실수 필드는 자동으로 캐스팅됩니다.
+
+### 2. 런타임 설정 (`Configuration`)
+
+`src/screenshot_analyzer/configuration.py`의 `Configuration` 모델을 통해 다음 옵션을 제어할 수 있습니다.
+
+- **Ingestion (Phase 0)**
+  - `ingestion_model` (기본값: `gpt-4o-mini`): 경량 Vision 모델
+  - `refinement_threshold` (기본값: `0.6`): 이 신뢰도 미만일 때 Vision Refiner 호출
+  - `ingestion_concurrency` (기본값: `3`): Ingestion 동시 처리 개수
+  - `refinement_concurrency` (기본값: `2`): Vision Refiner 동시 처리 개수
+
+- **에이전트/토큰 관련**
+  - `vision_model` (기본값: `gpt-4o`)
+  - `analysis_model` (기본값: `gpt-4o`)
+  - `max_tokens` (기본값: `8192`)
+  - `max_analysis_iterations` (기본값: `10`): Strategist–Classifier 루프 최대 반복 횟수
+  - `max_structured_output_retries` (기본값: `3`): 구조화 응답 실패 시 재시도 횟수
+
+이 값들은:
+
+- `RunnableConfig.configurable` 파라미터로 직접 주입하거나,
+- 동일한 이름의 대문자 환경 변수(e.g. `INGESTION_MODEL`, `MAX_TOKENS`)로 오버라이드할 수 있습니다.
+
+---
+
+## 🛠 Tech Stack (기술 스택)
 
 | 기술 | 버전 | 용도 |
 | --- | --- | --- |
 | **LangGraph** | 0.2.x | 멀티 에이전트 워크플로우 오케스트레이션 |
-| **OpenAI GPT-4o / mini** | latest | Vision API 기반 이미지 분석 (정밀/경량) |
-| **Pydantic** | v2 | 타입 안전한 State 및 도구 스키마 정의 |
-| **Streamlit** | latest | 직관적인 웹 인터페이스 제공 |
-| **LangSmith** | latest | 에이전트 실행 과정 트레이싱 및 디버깅 |
+| **LangChain / LangChain OpenAI** | 0.3.x / 0.2.x | LLM 호출 및 툴 연동 |
+| **OpenAI GPT-4o / 4o-mini** | latest | Vision/텍스트 분석 (정밀/경량) |
+| **Pydantic v2** | latest | 타입 안전한 State 및 툴 스키마 정의 |
+| **Streamlit** | latest | 웹 UI |
+| **LangSmith** | latest | 에이전트 실행 트레이싱 및 디버깅 |
 
 ---
 
-## 📂 프로젝트 구조
-```text
-src/screenshot_analyzer/
-├── analyzer.py       # 메인 그래프 및 서브그래프 정의 (Logic)
-├── state.py          # IngestionMetadata, RefinementResult 등 State 정의
-├── prompts.py        # 에이전트별 페르소나 및 시스템 프롬프트
-└── utils.py          # Vision API 호출 및 이미지 전처리 유틸
-```
+## 📚 Learn More
+
+- **포트폴리오 / 설계 스토리**  
+  - https://drive.google.com/file/d/1AmmVhXYxPF38rthLBKgO95YjA12dCGOL/view?usp=sharing
+  - 초기 선형 워크플로우 구조 → 자율 에이전트 전환, 권한 설계, Self-Healing 등 
+  개발 과정에서 마주한 기술적 도전과 해결 방법을 정리했습니다.
