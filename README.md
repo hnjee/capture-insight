@@ -57,7 +57,7 @@ flowchart TB
 
 ---
 
-## 🚀 Quickstart (로컬 실행 - `uv` 기준)
+## 🚀 Quickstart (로컬 실행)
 
 ### 1. 저장소 클론
 
@@ -97,15 +97,14 @@ uv run streamlit run app.py
 
 기본 브라우저에서 Streamlit 앱이 열리며, 예제 스크린샷 목록을 확인하고 **"🚀 분석 시작"** 버튼으로 분류를 실행할 수 있습니다.
 
-### 5. 내 스크린샷으로 전체 파이프라인 돌려보기
+### 5. 내 스크린샷으로 전체 파이프라인 돌려보기 ✅ 
 
-1. `examples/screenshots/` 폴더에 있는 예제 이미지를 지우거나 그대로 두고,  
+1) `examples/screenshots/` 폴더에 있는 예제 이미지를 지우거나 그대로 두고,  
    **분석해 보고 싶은 스크린샷 파일들을 이 폴더에 복사**합니다.
-2. 브라우저에서 Streamlit 페이지를 새로고침하면, 업로드한 스크린샷 목록이 갱신됩니다.
-3. 왼쪽 사이드바에서 **"🔄 처음부터 VLM으로 분석 (Ingestion 실행)"** 을 체크합니다.  
-   - 기본값(체크 해제)은 사전 저장된 메타데이터를 사용하는 테스트 모드라,  
-     내 스크린샷에는 메타데이터가 없어 전체 파이프라인이 돌지 않습니다.
-4. 상단의 **"🚀 분석 시작"** 버튼을 눌러 전체 파이프라인(Ingestion → Strategist → Classifier → Vision Refiner)을 실행합니다.
+2) 브라우저에서 Streamlit 페이지를 새로고침하면, 업로드한 스크린샷 목록이 갱신됩니다.
+3) 왼쪽 사이드바에서 **"🔄 처음부터 VLM으로 분석 (Ingestion 실행)"** 을 체크합니다.  
+   - 기본값(체크 해제)은 사전 저장된 메타데이터를 사용하는 테스트 모드이기 때문에, 내가 추가한 스크린샷에 대한 전체 파이프라인이 돌지 않습니다.
+4) 상단의 **"🚀 분석 시작"** 버튼을 눌러 전체 파이프라인(Ingestion → Strategist → Classifier → Vision Refiner)을 실행합니다.
 
 ---
 
@@ -146,7 +145,7 @@ uv run streamlit run app.py
   - `max_structured_output_retries` (기본값: `3`): 구조화 응답 실패 시 재시도 횟수
 ---
 
-## 🛠 Tech Stack (기술 스택)
+## 🛠 기술 스택
 
 | 기술 | 버전 | 용도 |
 | --- | --- | --- |
@@ -159,9 +158,9 @@ uv run streamlit run app.py
 
 ---
 
-## 📚 Learn More
-
-- **포트폴리오 / 설계 스토리**  
-  - https://drive.google.com/file/d/1AmmVhXYxPF38rthLBKgO95YjA12dCGOL/view?usp=sharing
-  - 초기 선형 워크플로우 구조 → 자율 에이전트 전환, 권한 설계, Self-Healing 등 
-  개발 과정에서 마주한 기술적 도전과 해결 방법을 정리했습니다.
+## 📚 포트폴리오  
+- [Capture Insight 포트폴리오 링크](https://drive.google.com/file/d/1AmmVhXYxPF38rthLBKgO95YjA12dCGOL/view?usp=sharing)
+- 개발 과정에서 마주한 기술적 도전과 해결 방법을 정리했습니다.
+  - 초기 선형 워크플로우 구조 → 자율 에이전트 전환
+  - VLM 비용 최적화, Self-Healing, 에이전트 역할 분리 (Classfier가 말을 듣지 않는다)
+- 📬 문의사항 및 피드백: leehnjee@gmail.com
